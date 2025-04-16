@@ -12,13 +12,35 @@ import re
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_groq_api_key():
-    """Get the Groq API key from Streamlit secrets"""
+def get_llm_config():
+    """Get the LLM configuration from Streamlit secrets or session state"""
     try:
-        return st.secrets["GROQ_API_KEY"]
+        # Get API key from secrets
+        api_key = st.secrets["GROQ_API_KEY"]
+
+        # Get base URL and model from session state if available, otherwise from secrets
+        if "llm_base_url" in st.session_state and st.session_state.llm_base_url:
+            base_url = st.session_state.llm_base_url
+        else:
+            base_url = st.secrets.get("LLM_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
+
+        if "llm_model" in st.session_state and st.session_state.llm_model:
+            model = st.session_state.llm_model
+        else:
+            model = st.secrets.get("LLM_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+
+        return {
+            "api_key": api_key,
+            "base_url": base_url,
+            "model": model
+        }
     except Exception as e:
-        logger.warning(f"Error getting Groq API key: {e}")
-        return "dummy_api_key_for_testing"
+        logger.warning(f"Error getting LLM configuration: {e}")
+        return {
+            "api_key": "dummy_api_key_for_testing",
+            "base_url": "https://api.groq.com/openai/v1/chat/completions",
+            "model": "meta-llama/llama-4-maverick-17b-128e-instruct"
+        }
 
 def analyze_spaceweather_data(sections):
     """
@@ -126,7 +148,7 @@ Only include events that are explicitly mentioned in the provided text. If no ev
 
 def call_groq_llm(prompt):
     """
-    Call the Groq LLM API
+    Call the LLM API
 
     Args:
         prompt (str): The prompt to send to the LLM
@@ -134,8 +156,10 @@ def call_groq_llm(prompt):
     Returns:
         str: The LLM response
     """
-    api_key = get_groq_api_key()
-    url = "https://api.groq.com/openai/v1/chat/completions"
+    config = get_llm_config()
+    api_key = config["api_key"]
+    url = config["base_url"]
+    model = config["model"]
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -143,7 +167,7 @@ def call_groq_llm(prompt):
     }
 
     data = {
-        "model": "meta-llama/llama-4-maverick-17b-128e-instruct",
+        "model": model,
         "messages": [
             {"role": "system", "content": "You are a helpful space weather expert that analyzes data from spaceweather.com and provides structured information about space weather events."},
             {"role": "user", "content": prompt}

@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
+import re
 
 from utils import get_date_range
 from data_manager import process_date, process_date_range, get_significant_events, count_events_by_category, get_all_data
@@ -21,18 +22,33 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    /* Dark mode compatible event cards */
     .event-card {
-        border: 1px solid #ddd;
+        border: 1px solid rgba(221, 221, 221, 0.3);
         border-radius: 5px;
         padding: 10px;
         margin-bottom: 10px;
-        background-color: white;
+        background-color: rgba(255, 255, 255, 0.05);
+        color: inherit;
     }
     .event-card.significant {
         border-left: 5px solid #ff4b4b;
     }
     .event-card h4 {
         margin-top: 0;
+        color: inherit;
+    }
+    .event-card p {
+        color: inherit;
+    }
+    .event-card strong {
+        color: inherit;
+    }
+    .event-card img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 4px;
+        margin-top: 10px;
     }
     .timeline-day {
         cursor: pointer;
@@ -55,12 +71,108 @@ st.markdown("Tracking solar events from spaceweather.com")
 # Sidebar
 st.sidebar.header("Controls")
 
-# Date range selection
+# Initialize session state for admin authentication
+if "admin_authenticated" not in st.session_state:
+    st.session_state.admin_authenticated = False
+
+# Initialize session state for LLM configuration
+if "llm_base_url" not in st.session_state:
+    st.session_state.llm_base_url = st.secrets.get("LLM_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
+
+if "llm_model" not in st.session_state:
+    st.session_state.llm_model = st.secrets.get("LLM_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+
+# Date range selection - define days_to_show variable for use throughout the app
 days_to_show = st.sidebar.slider("Days to display", 1, 30, 7)
+
+# Admin section with password protection
+with st.sidebar.expander("⚙️ Admin"):
+    if not st.session_state.admin_authenticated:
+        admin_password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if admin_password == st.secrets["password"]:
+                st.session_state.admin_authenticated = True
+                st.success("Authentication successful!")
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+    else:
+        st.success("Authenticated as Admin")
+
+        # LLM Configuration
+        st.subheader("LLM Configuration")
+        new_base_url = st.text_input("LLM Base URL", value=st.session_state.llm_base_url)
+        new_model = st.text_input("LLM Model", value=st.session_state.llm_model)
+
+        if st.button("Update LLM Config"):
+            st.session_state.llm_base_url = new_base_url
+            st.session_state.llm_model = new_model
+            st.success("LLM configuration updated!")
+
+        # Data Management
+        st.subheader("Data Management")
+        use_test_dates = st.checkbox("Use test dates (2023-04-15)", value=False,
+                                    help="Use fixed test dates instead of current dates")
+
+        # Show data cache status
+        existing_data = get_all_data()
+        if existing_data:
+            st.info(f"Cache contains data for {len(existing_data)} dates")
+
+            # Display cached and processed dates info from the current session
+            if "cached_dates_count" in st.session_state:
+                st.success(f"✓ Using cached data for {st.session_state.cached_dates_count} dates in current view")
+
+            if "processed_dates_count" in st.session_state:
+                st.info(f"✓ Processed {st.session_state.processed_dates_count} new dates in current session")
+
+            # Cache management buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Clear All Cached Data"):
+                    import shutil
+                    try:
+                        shutil.rmtree("data")
+                        st.success("Cache cleared successfully!")
+                        # Clear the Streamlit cache as well
+                        st.cache_data.clear()
+                        # Reset session state counters
+                        if "cached_dates_count" in st.session_state:
+                            del st.session_state.cached_dates_count
+                        if "processed_dates_count" in st.session_state:
+                            del st.session_state.processed_dates_count
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error clearing cache: {e}")
+
+            with col2:
+                if st.button("Refresh Data"):
+                    with st.spinner("Fetching latest data..."):
+                        # Force re-processing of the date range
+                        date_range = get_date_range(days=days_to_show, use_test_dates=use_test_dates)
+                        process_date_range(
+                            start_date=date_range[0],
+                            end_date=date_range[-1]
+                        )
+                    st.success("Data refreshed!")
+                    st.rerun()
+        else:
+            st.warning("No cached data available")
+
+        # Logout button
+        if st.button("Logout"):
+            st.session_state.admin_authenticated = False
+            st.rerun()
+
+# Calculate date range based on days_to_show
 end_date = datetime.now()
 start_date = end_date - timedelta(days=days_to_show)
 
 st.sidebar.markdown(f"**Date Range:** {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+
+# Initialize use_test_dates if not set in admin panel
+if "use_test_dates" not in locals():
+    use_test_dates = False
 
 # Category filters
 st.sidebar.header("Event Categories")
@@ -72,31 +184,43 @@ show_coronal_holes = st.sidebar.checkbox("Coronal Holes", value=True)
 # Significance filter
 show_significant_only = st.sidebar.checkbox("Show Significant Events Only", value=False)
 
-# Refresh data
-if st.sidebar.button("Refresh Data"):
-    with st.spinner("Fetching latest data..."):
-        process_date_range(
-            start_date=start_date.strftime("%Y-%m-%d"),
-            end_date=end_date.strftime("%Y-%m-%d")
-        )
-    st.sidebar.success("Data refreshed!")
-
 # Process data for selected date range
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def load_timeline_data():
+def load_timeline_data(use_test_dates=False):
+    """Load timeline data, using cached data when available
+
+    Args:
+        use_test_dates (bool): Whether to use test dates or real dates
+
+    Returns:
+        list: Filtered data for the selected date range
+    """
     # Use the global days_to_show variable
-    date_range = get_date_range(days=days_to_show)
+    date_range = get_date_range(days=days_to_show, use_test_dates=use_test_dates)
 
     # Check if we need to process any dates
     existing_data = get_all_data()
     existing_dates = [data.get("date") for data in existing_data]
 
+    # Identify which dates need to be processed
     dates_to_process = [date for date in date_range if date not in existing_dates]
+    dates_from_cache = [date for date in date_range if date in existing_dates]
 
+    # Process new dates if needed
     if dates_to_process:
         with st.spinner(f"Processing {len(dates_to_process)} new dates..."):
             for date in dates_to_process:
                 process_date(date)
+
+        # Store the processed dates info in session state for admin panel
+        if "processed_dates_count" not in st.session_state:
+            st.session_state.processed_dates_count = len(dates_to_process)
+        else:
+            st.session_state.processed_dates_count += len(dates_to_process)
+
+    # Store the cached dates info in session state for admin panel
+    if dates_from_cache:
+        st.session_state.cached_dates_count = len(dates_from_cache)
 
     # Get all data again after processing
     all_data = get_all_data()
@@ -107,7 +231,7 @@ def load_timeline_data():
     return filtered_data
 
 # Load data
-timeline_data = load_timeline_data()
+timeline_data = load_timeline_data(use_test_dates=use_test_dates)
 
 # Get event counts and significant events
 event_counts = count_events_by_category(timeline_data)
@@ -282,13 +406,18 @@ if selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
+                        # Get the event details and sanitize any HTML content
+                        detail = event.get('detail', 'No details available')
+                        # Remove any HTML tags from the detail text
+                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+
                         st.markdown(f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Coronal Mass Ejection</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                             {f"<p><strong>Predicted Arrival:</strong> {event.get('predicted_arrival')}</p>" if event.get('predicted_arrival') else ""}
-                            <p><strong>Details:</strong> {event.get('detail', 'No details available')}</p>
+                            <p><strong>Details:</strong> {detail}</p>
                             {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
                         </div>
                         """, unsafe_allow_html=True)
@@ -305,12 +434,17 @@ if selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
+                        # Get the event details and sanitize any HTML content
+                        detail = event.get('detail', 'No details available')
+                        # Remove any HTML tags from the detail text
+                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+
                         st.markdown(f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Sunspot Activity</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
-                            <p><strong>Details:</strong> {event.get('detail', 'No details available')}</p>
+                            <p><strong>Details:</strong> {detail}</p>
                             {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
                         </div>
                         """, unsafe_allow_html=True)
@@ -327,12 +461,17 @@ if selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
+                        # Get the event details and sanitize any HTML content
+                        detail = event.get('detail', 'No details available')
+                        # Remove any HTML tags from the detail text
+                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+
                         st.markdown(f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Solar Flare</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
-                            <p><strong>Details:</strong> {event.get('detail', 'No details available')}</p>
+                            <p><strong>Details:</strong> {detail}</p>
                             {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
                         </div>
                         """, unsafe_allow_html=True)
@@ -349,13 +488,18 @@ if selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
+                        # Get the event details and sanitize any HTML content
+                        detail = event.get('detail', 'No details available')
+                        # Remove any HTML tags from the detail text
+                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+
                         st.markdown(f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Coronal Hole</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                             {f"<p><strong>Predicted Arrival:</strong> {event.get('predicted_arrival')}</p>" if event.get('predicted_arrival') else ""}
-                            <p><strong>Details:</strong> {event.get('detail', 'No details available')}</p>
+                            <p><strong>Details:</strong> {detail}</p>
                             {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
                         </div>
                         """, unsafe_allow_html=True)
@@ -429,7 +573,14 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("Data source: [spaceweather.com](https://spaceweather.com)")
-st.markdown("Powered by Groq LLM (meta-llama/llama-4-maverick-17b-128e-instruct)")
+
+# Display current LLM model
+if "llm_model" in st.session_state:
+    model_name = st.session_state.llm_model
+else:
+    model_name = st.secrets.get("LLM_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+
+st.markdown(f"Powered by LLM: {model_name}")
 
 # Add information about the app
 with st.expander("About this app"):

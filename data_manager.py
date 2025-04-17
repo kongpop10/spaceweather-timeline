@@ -35,6 +35,44 @@ def get_supabase_client():
             st.session_state.supabase_client = None
     return st.session_state.supabase_client
 
+def check_supabase_for_data(date_str):
+    """
+    Check Supabase for data for a specific date
+
+    Args:
+        date_str (str): Date in format YYYY-MM-DD
+
+    Returns:
+        dict: Data from Supabase or None if not found
+    """
+    supabase_client = get_supabase_client()
+    if not supabase_client:
+        logger.info("Supabase client not available")
+        return None
+
+    try:
+        # Try to get data from Supabase
+        supabase_data = supabase_client.get_date(date_str)
+        if supabase_data:
+            # Check if the data has events
+            events = supabase_data.get("events", {})
+            total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+
+            if total_events > 0 and "error" not in supabase_data:
+                logger.info(f"Data for {date_str} found in Supabase with {total_events} events")
+                # Save to local database for future use
+                save_data_to_db(supabase_data)
+                return supabase_data
+            else:
+                logger.info(f"Data for {date_str} found in Supabase but has no events")
+        else:
+            logger.info(f"No data found in Supabase for {date_str}")
+
+        return None
+    except Exception as e:
+        logger.error(f"Error checking Supabase for data: {e}")
+        return None
+
 def process_date(date_str, force_refresh=False, max_retries=2):
     """
     Process data for a specific date
@@ -58,6 +96,12 @@ def process_date(date_str, force_refresh=False, max_retries=2):
             save_data_to_db(existing_data)
             logger.info(f"Imported data for {date_str} from JSON to SQLite")
 
+    # If still no data, check Supabase
+    if not existing_data and not force_refresh:
+        existing_data = check_supabase_for_data(date_str)
+        if existing_data:
+            logger.info(f"Data for {date_str} retrieved from Supabase and saved to local database")
+
     # Check if existing data is empty and we're forcing a refresh
     if existing_data and not force_refresh:
         # Check if the existing data has events
@@ -68,6 +112,17 @@ def process_date(date_str, force_refresh=False, max_retries=2):
             logger.info(f"Data for {date_str} already exists with {total_events} events")
             return existing_data
         elif not force_refresh:
+            # If data exists but has no events, check Supabase before returning
+            if total_events == 0 or "error" in existing_data:
+                supabase_data = check_supabase_for_data(date_str)
+                if supabase_data:
+                    # If Supabase has data with events, use that instead
+                    events = supabase_data.get("events", {})
+                    total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+                    if total_events > 0 and "error" not in supabase_data:
+                        logger.info(f"Using Supabase data for {date_str} which has {total_events} events")
+                        return supabase_data
+
             logger.info(f"Data for {date_str} exists but has no events. Use force_refresh=True to reprocess.")
             return existing_data
         else:
@@ -203,6 +258,32 @@ def process_date_range(start_date=None, end_date=None, days=30, force_refresh=Fa
     while temp_date_obj <= end_date_obj:
         date_range.append(temp_date_obj.strftime("%Y-%m-%d"))
         temp_date_obj += timedelta(days=1)
+
+    # If not forcing refresh, try to get data from Supabase for the entire date range
+    if not force_refresh:
+        # Try to get data from Supabase for all dates at once
+        supabase_client = get_supabase_client()
+        if supabase_client:
+            try:
+                logger.info(f"Checking Supabase for data in date range {start_date} to {end_date}")
+                supabase_data = supabase_client.get_all_dates()
+                if supabase_data:
+                    # Filter to only include dates in our range
+                    supabase_data = [data for data in supabase_data if data.get("date") in date_range]
+
+                    # Save all valid data to local database
+                    for data in supabase_data:
+                        # Check if the data has events
+                        events = data.get("events", {})
+                        total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+
+                        if total_events > 0 and "error" not in data:
+                            save_data_to_db(data)
+                            logger.info(f"Data for {data.get('date')} retrieved from Supabase and saved to local database")
+
+                    logger.info(f"Retrieved {len(supabase_data)} dates from Supabase")
+            except Exception as e:
+                logger.error(f"Error retrieving data from Supabase: {e}")
 
     # Process each date
     results = []

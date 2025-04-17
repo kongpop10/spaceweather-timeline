@@ -671,6 +671,46 @@ def load_timeline_data(force_refresh=False):
     dates_to_process = [date for date in date_range if date not in existing_dates]
     dates_from_cache = [date for date in date_range if date in existing_dates]
 
+    # If we have dates to process, check Supabase first
+    if dates_to_process and not force_refresh:
+        from data_manager import get_supabase_client
+
+        # Try to get data from Supabase for all dates at once
+        supabase_client = get_supabase_client()
+        if supabase_client:
+            try:
+                logger.info(f"Checking Supabase for data in date range {date_range[0]} to {date_range[-1]}")
+                supabase_data = supabase_client.get_all_dates()
+                if supabase_data:
+                    # Filter to only include dates we need to process
+                    supabase_data = [data for data in supabase_data if data.get("date") in dates_to_process]
+
+                    # Save all valid data to local database
+                    for data in supabase_data:
+                        # Check if the data has events
+                        events = data.get("events", {})
+                        total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+
+                        if total_events > 0 and "error" not in data:
+                            # Save to local database
+                            from db_manager import save_data_to_db
+                            save_data_to_db(data)
+                            logger.info(f"Data for {data.get('date')} retrieved from Supabase and saved to local database")
+
+                            # Add a flag to indicate this data came from Supabase
+                            if "from_supabase" not in st.session_state:
+                                st.session_state.from_supabase = []
+                            st.session_state.from_supabase.append(data.get("date"))
+
+                            # Remove from dates_to_process
+                            if data.get("date") in dates_to_process:
+                                dates_to_process.remove(data.get("date"))
+                                dates_from_cache.append(data.get("date"))
+
+                    logger.info(f"Retrieved {len(supabase_data)} dates from Supabase")
+            except Exception as e:
+                logger.error(f"Error retrieving data from Supabase: {e}")
+
     # Check for empty data structures (those with no events or error messages)
     dates_with_empty_data = []
     for data in existing_data:
@@ -680,9 +720,44 @@ def load_timeline_data(force_refresh=False):
             if total_events == 0 or "error" in data:
                 dates_with_empty_data.append(data.get("date"))
 
-    # Add dates with empty data to the dates to process if not already forcing a refresh
+    # For dates with empty data, check Supabase first before adding to dates_to_process
     if dates_with_empty_data and not force_refresh:
-        logger.info(f"Found {len(dates_with_empty_data)} dates with empty data. Will try to refresh them.")
+        logger.info(f"Found {len(dates_with_empty_data)} dates with empty data. Checking Supabase first.")
+
+        # Try to get data from Supabase for empty dates
+        supabase_client = get_supabase_client() if 'get_supabase_client' in locals() else None
+        if not supabase_client:
+            from data_manager import get_supabase_client
+            supabase_client = get_supabase_client()
+
+        if supabase_client:
+            try:
+                for date in dates_with_empty_data:
+                    # Try to get data from Supabase for this date
+                    supabase_data = supabase_client.get_date(date)
+                    if supabase_data:
+                        # Check if the data has events
+                        events = supabase_data.get("events", {})
+                        total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+
+                        if total_events > 0 and "error" not in supabase_data:
+                            # Save to local database
+                            from db_manager import save_data_to_db
+                            save_data_to_db(supabase_data)
+                            logger.info(f"Data for {date} retrieved from Supabase and saved to local database")
+
+                            # Add a flag to indicate this data came from Supabase
+                            if "from_supabase" not in st.session_state:
+                                st.session_state.from_supabase = []
+                            st.session_state.from_supabase.append(date)
+
+                            # Remove from dates_with_empty_data
+                            dates_with_empty_data.remove(date)
+            except Exception as e:
+                logger.error(f"Error retrieving data from Supabase for empty dates: {e}")
+
+        # Add remaining dates with empty data to the dates to process
+        logger.info(f"After checking Supabase, {len(dates_with_empty_data)} dates still have empty data. Will try to refresh them.")
         for date in dates_with_empty_data:
             if date not in dates_to_process:
                 dates_to_process.append(date)
@@ -746,6 +821,13 @@ for data in timeline_data:
 # Show a message if there are empty data entries
 if empty_data_count > 0:
     st.warning(f"Found {empty_data_count} dates with no events data. You can use the 'Refresh Empty Data' button in the Admin panel to try to fill in the missing data using the LLM.")
+
+# Show a message if data was retrieved from Supabase
+if "from_supabase" in st.session_state and st.session_state.from_supabase:
+    supabase_count = len(st.session_state.from_supabase)
+    st.success(f"Retrieved data for {supabase_count} date(s) from Supabase: {', '.join(st.session_state.from_supabase)}")
+    # Clear the flag after displaying the message
+    st.session_state.from_supabase = []
 
 # Get event counts and significant events
 event_counts = count_events_by_category(timeline_data)

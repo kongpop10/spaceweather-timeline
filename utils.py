@@ -46,24 +46,18 @@ def get_all_data():
                     continue
     return all_data
 
-def get_date_range(days=30, use_test_dates=False):
+def get_date_range(days=30):
     """
     Get a range of dates
 
     Args:
         days (int): Number of days to include in the range
-        use_test_dates (bool): Whether to use test dates (fixed in the past) or real dates
 
     Returns:
         list: List of date strings in format YYYY-MM-DD
     """
-    if use_test_dates:
-        # For testing purposes, use a fixed date range in the past
-        end_date = datetime(2023, 4, 15)  # Use a fixed date in the past
-    else:
-        # Use current date for real usage
-        end_date = datetime.now()
-
+    # Use current date for real usage
+    end_date = datetime.now()
     start_date = end_date - timedelta(days=days-1)
 
     date_range = []

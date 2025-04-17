@@ -1,12 +1,11 @@
 """
-Functions to process text with Groq LLM
+Functions to process text with OpenRouter LLM
 """
 import json
 import requests
 import streamlit as st
 import logging
-import random
-import re
+from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,30 +15,45 @@ def get_llm_config():
     """Get the LLM configuration from Streamlit secrets or session state"""
     try:
         # Get API key from secrets
-        api_key = st.secrets["GROQ_API_KEY"]
+        api_key = st.secrets.get("OPENROUTER_API_KEY", st.secrets.get("GROQ_API_KEY", ""))
 
         # Get base URL and model from session state if available, otherwise from secrets
         if "llm_base_url" in st.session_state and st.session_state.llm_base_url:
             base_url = st.session_state.llm_base_url
         else:
-            base_url = st.secrets.get("LLM_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
+            base_url = st.secrets.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
         if "llm_model" in st.session_state and st.session_state.llm_model:
             model = st.session_state.llm_model
         else:
-            model = st.secrets.get("LLM_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+            model = st.secrets.get("LLM_MODEL", "deepseek/deepseek-chat-v3-0324:free")
+
+        # Get site info for OpenRouter from session state if available, otherwise from secrets
+        if "site_url" in st.session_state and st.session_state.site_url:
+            site_url = st.session_state.site_url
+        else:
+            site_url = st.secrets.get("SITE_URL", "https://spaceweather-timeline.streamlit.app")
+
+        if "site_name" in st.session_state and st.session_state.site_name:
+            site_name = st.session_state.site_name
+        else:
+            site_name = st.secrets.get("SITE_NAME", "Space Weather Timeline")
 
         return {
             "api_key": api_key,
             "base_url": base_url,
-            "model": model
+            "model": model,
+            "site_url": site_url,
+            "site_name": site_name
         }
     except Exception as e:
         logger.warning(f"Error getting LLM configuration: {e}")
         return {
-            "api_key": "dummy_api_key_for_testing",
-            "base_url": "https://api.groq.com/openai/v1/chat/completions",
-            "model": "meta-llama/llama-4-maverick-17b-128e-instruct"
+            "api_key": "",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model": "deepseek/deepseek-chat-v3-0324:free",
+            "site_url": "https://spaceweather-timeline.streamlit.app",
+            "site_name": "Space Weather Timeline"
         }
 
 def analyze_spaceweather_data(sections):
@@ -53,14 +67,25 @@ def analyze_spaceweather_data(sections):
         dict: Structured data with categorized events
     """
     if not sections:
-        return None
+        logger.warning("No sections data provided for LLM analysis")
+        return {
+            "date": "unknown",
+            "url": "unknown",
+            "events": {
+                "cme": [],
+                "sunspot": [],
+                "flares": [],
+                "coronal_holes": []
+            },
+            "error": "No sections data provided"
+        }
 
     # Prepare the prompt
     prompt = create_analysis_prompt(sections)
 
     # Call the LLM
     try:
-        response = call_groq_llm(prompt)
+        response = call_llm(prompt)
 
         # Parse the response
         structured_data = parse_llm_response(response, sections)
@@ -69,7 +94,18 @@ def analyze_spaceweather_data(sections):
 
     except Exception as e:
         logger.error(f"Error analyzing spaceweather data: {e}")
-        return None
+        # Return a basic structure instead of None
+        return {
+            "date": sections.get("date", "unknown"),
+            "url": sections.get("url", "unknown"),
+            "events": {
+                "cme": [],
+                "sunspot": [],
+                "flares": [],
+                "coronal_holes": []
+            },
+            "error": f"Error analyzing data: {str(e)}"
+        }
 
 def create_analysis_prompt(sections):
     """
@@ -146,9 +182,9 @@ Only include events that are explicitly mentioned in the provided text. If no ev
 
     return prompt
 
-def call_groq_llm(prompt):
+def call_llm(prompt):
     """
-    Call the LLM API
+    Call the LLM API using OpenRouter
 
     Args:
         prompt (str): The prompt to send to the LLM
@@ -158,119 +194,47 @@ def call_groq_llm(prompt):
     """
     config = get_llm_config()
     api_key = config["api_key"]
-    url = config["base_url"]
+    base_url = config["base_url"]
     model = config["model"]
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a helpful space weather expert that analyzes data from spaceweather.com and provides structured information about space weather events."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.2,
-        "max_tokens": 4000
-    }
+    site_url = config["site_url"]
+    site_name = config["site_name"]
 
     try:
-        # For testing purposes, if we're using a dummy API key, return a mock response
-        if api_key == "dummy_api_key_for_testing":
-            logger.warning("Using mock LLM response for testing")
-            return create_mock_llm_response(prompt)
+        # Create OpenAI client with OpenRouter base URL
+        client = OpenAI(
+            base_url=base_url,
+            api_key=api_key,
+        )
 
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
+        # Call the API
+        completion = client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": site_url,  # Site URL for rankings on openrouter.ai
+                "X-Title": site_name,  # Site title for rankings on openrouter.ai
+            },
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful space weather expert that analyzes data from spaceweather.com and provides structured information about space weather events. Always respond with valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=4000,
+            response_format={"type": "json_object"}  # Request JSON format explicitly
+        )
 
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
+        # Extract the response content
+        content = completion.choices[0].message.content
+
+        # Log a sample of the response for debugging
+        logger.debug(f"LLM response sample: {content[:200]}...")
+
+        return content
 
     except Exception as e:
-        logger.error(f"Error calling Groq LLM API: {e}")
-        # Return a mock response for testing
-        logger.warning("Falling back to mock LLM response")
-        return create_mock_llm_response(prompt)
+        logger.error(f"Error calling OpenRouter LLM API: {e}")
+        return None
 
-def create_mock_llm_response(prompt):
-    """
-    Create a mock LLM response for testing purposes
 
-    Args:
-        prompt (str): The prompt that would have been sent to the LLM
-
-    Returns:
-        str: A mock LLM response in JSON format
-    """
-    # Extract date from the prompt
-    date_match = re.search(r'for (\d{4}-\d{2}-\d{2})', prompt)
-    if date_match:
-        date = date_match.group(1)
-    else:
-        date = "2023-04-15"  # Default date
-
-    # Generate random events
-    cme_events = []
-    sunspot_events = []
-    flare_events = []
-    coronal_hole_events = []
-
-    # Add a random number of events for each category
-    if random.random() > 0.3:  # 70% chance of having a CME event
-        cme_events.append({
-            "tone": random.choice(["Normal", "Significant"]),
-            "date": date,
-            "predicted_arrival": random.choice([None, f"{date}T{random.randint(0, 23):02d}:{random.randint(0, 59):02d}:00Z"]),
-            "detail": f"A {'Earth-directed' if random.random() > 0.5 else 'non-Earth-directed'} CME was observed leaving the sun at a speed of {random.randint(500, 2000)} km/s.",
-            "image_url": random.choice([None, "https://spaceweather.com/images2023/01jan23/cme_blank.jpg"])
-        })
-
-    if random.random() > 0.2:  # 80% chance of having a sunspot event
-        sunspot_events.append({
-            "tone": random.choice(["Normal", "Significant"]),
-            "date": date,
-            "predicted_arrival": None,
-            "detail": f"Sunspot AR{random.randint(3000, 3999)} is {'growing' if random.random() > 0.5 else 'stable'} with a {'beta-gamma-delta' if random.random() > 0.7 else 'beta'} magnetic configuration.",
-            "image_url": random.choice([None, "https://spaceweather.com/images2023/01jan23/sunspot_blank.jpg"])
-        })
-
-    if random.random() > 0.4:  # 60% chance of having a solar flare event
-        flare_class = random.choice(['C', 'M', 'X'])
-        flare_intensity = random.randint(1, 9)
-        flare_events.append({
-            "tone": "Significant" if flare_class == 'X' else ("Normal" if flare_class == 'C' else random.choice(["Normal", "Significant"])),
-            "date": date,
-            "predicted_arrival": None,
-            "detail": f"A {flare_class}{flare_intensity} solar flare erupted from sunspot region AR{random.randint(3000, 3999)} at {date}T{random.randint(0, 23):02d}:{random.randint(0, 59):02d}:00Z.",
-            "image_url": random.choice([None, "https://spaceweather.com/images2023/01jan23/flare_blank.jpg"])
-        })
-
-    if random.random() > 0.5:  # 50% chance of having a coronal hole event
-        ch_size = random.choice(['small', 'medium', 'large'])
-        ch_position = random.choice(['northern hemisphere', 'southern hemisphere', 'equatorial'])
-        coronal_hole_events.append({
-            "tone": "Significant" if ch_size == 'large' and ch_position == 'equatorial' else "Normal",
-            "date": date,
-            "predicted_arrival": random.choice([None, f"{date}T{random.randint(0, 23):02d}:{random.randint(0, 59):02d}:00Z"]),
-            "detail": f"A {ch_size} coronal hole is located in the sun's {ch_position}. High-speed solar wind flowing from this coronal hole could reach Earth in the next 2-3 days.",
-            "image_url": random.choice([None, "https://spaceweather.com/images2023/01jan23/coronalhole_sdo_blank.jpg"])
-        })
-
-    # Create the mock response
-    mock_response = {
-        "date": date,
-        "events": {
-            "cme": cme_events,
-            "sunspot": sunspot_events,
-            "flares": flare_events,
-            "coronal_holes": coronal_hole_events
-        }
-    }
-
-    # Return as JSON string
-    return json.dumps(mock_response, indent=2)
 
 def parse_llm_response(response, sections):
     """
@@ -283,13 +247,45 @@ def parse_llm_response(response, sections):
     Returns:
         dict: Structured data with categorized events
     """
+    # Check if response is None or empty
+    if response is None or not response.strip():
+        logger.warning(f"LLM returned None or empty response for date {sections.get('date')}")
+        return {
+            "date": sections.get("date"),
+            "url": sections.get("url"),
+            "events": {
+                "cme": [],
+                "sunspot": [],
+                "flares": [],
+                "coronal_holes": []
+            },
+            "error": "LLM returned None or empty response"
+        }
+
     try:
+        # Log the raw response for debugging
+        logger.debug(f"Raw LLM response for {sections.get('date')}: {response[:200]}...")
+
         # Extract JSON from the response (it might be wrapped in ```json ... ```)
         json_str = response
         if "```json" in response:
             json_str = response.split("```json")[1].split("```")[0].strip()
         elif "```" in response:
-            json_str = response.split("```")[1].split("```")[0].strip()
+            # Try to find any code block
+            parts = response.split("```")
+            if len(parts) >= 3:  # At least one complete code block
+                json_str = parts[1].strip()
+
+        # Try to find JSON object if no code blocks were found
+        if not json_str.strip().startswith('{'):
+            # Look for a JSON object starting with { and ending with }
+            import re
+            json_match = re.search(r'(\{.*?\})', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+
+        # Log the extracted JSON string for debugging
+        logger.debug(f"Extracted JSON for {sections.get('date')}: {json_str[:200]}...")
 
         # Parse the JSON
         data = json.loads(json_str)
@@ -297,10 +293,23 @@ def parse_llm_response(response, sections):
         # Add the original URL
         data["url"] = sections.get("url")
 
+        # Ensure date is present
+        if "date" not in data:
+            data["date"] = sections.get("date")
+
+        # Ensure all required fields exist
+        if "events" not in data:
+            data["events"] = {}
+
+        for category in ["cme", "sunspot", "flares", "coronal_holes"]:
+            if category not in data["events"]:
+                data["events"][category] = []
+
         return data
 
     except Exception as e:
         logger.error(f"Error parsing LLM response: {e}")
+        logger.error(f"Problematic response: {response[:500]}...")
 
         # Fallback: create a basic structure
         return {

@@ -7,6 +7,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
 import re
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 from utils import get_date_range
 from data_manager import process_date, process_date_range, get_significant_events, count_events_by_category, get_all_data
@@ -66,7 +71,7 @@ st.markdown("""
 
 # Title
 st.title("☀️ Space Weather Timeline")
-st.markdown("Tracking solar events from spaceweather.com")
+st.markdown("Tracking solar events from spaceweather.com using OpenRouter LLM")
 
 # Sidebar
 st.sidebar.header("Controls")
@@ -77,10 +82,17 @@ if "admin_authenticated" not in st.session_state:
 
 # Initialize session state for LLM configuration
 if "llm_base_url" not in st.session_state:
-    st.session_state.llm_base_url = st.secrets.get("LLM_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
+    st.session_state.llm_base_url = st.secrets.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
 if "llm_model" not in st.session_state:
-    st.session_state.llm_model = st.secrets.get("LLM_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
+    st.session_state.llm_model = st.secrets.get("LLM_MODEL", "deepseek/deepseek-chat-v3-0324:free")
+
+# Initialize session state for OpenRouter site information
+if "site_url" not in st.session_state:
+    st.session_state.site_url = st.secrets.get("SITE_URL", "https://spaceweather-timeline.streamlit.app")
+
+if "site_name" not in st.session_state:
+    st.session_state.site_name = st.secrets.get("SITE_NAME", "Space Weather Timeline")
 
 # Date range selection - define days_to_show variable for use throughout the app
 days_to_show = st.sidebar.slider("Days to display", 1, 30, 7)
@@ -101,18 +113,27 @@ with st.sidebar.expander("⚙️ Admin"):
 
         # LLM Configuration
         st.subheader("LLM Configuration")
+        st.markdown("**Current LLM Service:** OpenRouter with deepseek/deepseek-chat-v3-0324:free model")
         new_base_url = st.text_input("LLM Base URL", value=st.session_state.llm_base_url)
         new_model = st.text_input("LLM Model", value=st.session_state.llm_model)
+
+        # Site information for OpenRouter
+        st.markdown("**OpenRouter Site Information:**")
+        site_url = st.text_input("Site URL", value=st.secrets.get("SITE_URL", "https://spaceweather-timeline.streamlit.app"))
+        site_name = st.text_input("Site Name", value=st.secrets.get("SITE_NAME", "Space Weather Timeline"))
 
         if st.button("Update LLM Config"):
             st.session_state.llm_base_url = new_base_url
             st.session_state.llm_model = new_model
+
+            # Update site information in session state
+            st.session_state.site_url = site_url
+            st.session_state.site_name = site_name
+
             st.success("LLM configuration updated!")
 
         # Data Management
         st.subheader("Data Management")
-        use_test_dates = st.checkbox("Use test dates (2023-04-15)", value=False,
-                                    help="Use fixed test dates instead of current dates")
 
         # Show data cache status
         existing_data = get_all_data()
@@ -145,16 +166,49 @@ with st.sidebar.expander("⚙️ Admin"):
                     except Exception as e:
                         st.error(f"Error clearing cache: {e}")
 
-            with col2:
-                if st.button("Refresh Data"):
+            col2a, col2b = st.columns(2)
+            with col2a:
+                if st.button("Refresh All Data"):
                     with st.spinner("Fetching latest data..."):
                         # Force re-processing of the date range
-                        date_range = get_date_range(days=days_to_show, use_test_dates=use_test_dates)
+                        date_range = get_date_range(days=days_to_show)
                         process_date_range(
                             start_date=date_range[0],
-                            end_date=date_range[-1]
+                            end_date=date_range[-1],
+                            force_refresh=True
                         )
-                    st.success("Data refreshed!")
+                    st.success("All data refreshed!")
+                    st.rerun()
+
+            with col2b:
+                if st.button("Refresh Empty Data"):
+                    # Set the flag to check for empty data
+                    st.session_state.check_empty_data = True
+                    # Clear the cache to force a refresh
+                    st.cache_data.clear()
+
+                    # Get the date range
+                    date_range = get_date_range(days=days_to_show)
+
+                    # Find dates with empty data
+                    existing_data = get_all_data()
+                    dates_with_empty_data = []
+                    for data in existing_data:
+                        if data.get("date") in date_range:
+                            events = data.get("events", {})
+                            total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+                            if total_events == 0 or "error" in data:
+                                dates_with_empty_data.append(data.get("date"))
+
+                    # Process empty dates with force_refresh=True
+                    if dates_with_empty_data:
+                        with st.spinner(f"Refreshing {len(dates_with_empty_data)} dates with empty data..."):
+                            for date in dates_with_empty_data:
+                                process_date(date, force_refresh=True)
+                        st.success(f"Refreshed {len(dates_with_empty_data)} dates with empty data!")
+                    else:
+                        st.info("No empty data found to refresh.")
+
                     st.rerun()
         else:
             st.warning("No cached data available")
@@ -170,9 +224,7 @@ start_date = end_date - timedelta(days=days_to_show)
 
 st.sidebar.markdown(f"**Date Range:** {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
 
-# Initialize use_test_dates if not set in admin panel
-if "use_test_dates" not in locals():
-    use_test_dates = False
+
 
 # Category filters
 st.sidebar.header("Event Categories")
@@ -186,17 +238,17 @@ show_significant_only = st.sidebar.checkbox("Show Significant Events Only", valu
 
 # Process data for selected date range
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def load_timeline_data(use_test_dates=False):
+def load_timeline_data(force_refresh=False):
     """Load timeline data, using cached data when available
 
     Args:
-        use_test_dates (bool): Whether to use test dates or real dates
+        force_refresh (bool): Whether to force refresh the data even if it exists
 
     Returns:
         list: Filtered data for the selected date range
     """
     # Use the global days_to_show variable
-    date_range = get_date_range(days=days_to_show, use_test_dates=use_test_dates)
+    date_range = get_date_range(days=days_to_show)
 
     # Check if we need to process any dates
     existing_data = get_all_data()
@@ -206,20 +258,43 @@ def load_timeline_data(use_test_dates=False):
     dates_to_process = [date for date in date_range if date not in existing_dates]
     dates_from_cache = [date for date in date_range if date in existing_dates]
 
+    # Check for empty data structures (those with no events or error messages)
+    dates_with_empty_data = []
+    for data in existing_data:
+        if data.get("date") in date_range:
+            events = data.get("events", {})
+            total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+            if total_events == 0 or "error" in data:
+                dates_with_empty_data.append(data.get("date"))
+
+    # Add dates with empty data to the dates to process if not already forcing a refresh
+    if dates_with_empty_data and not force_refresh:
+        logger.info(f"Found {len(dates_with_empty_data)} dates with empty data. Will try to refresh them.")
+        for date in dates_with_empty_data:
+            if date not in dates_to_process:
+                dates_to_process.append(date)
+
     # Process new dates if needed
-    if dates_to_process:
-        with st.spinner(f"Processing {len(dates_to_process)} new dates..."):
-            for date in dates_to_process:
-                process_date(date)
+    if dates_to_process or force_refresh:
+        with st.spinner(f"Processing {len(dates_to_process) if not force_refresh else len(date_range)} dates..."):
+            if force_refresh:
+                # Process all dates with force_refresh=True
+                for date in date_range:
+                    process_date(date, force_refresh=True)
+            else:
+                # Process only new dates and dates with empty data
+                for date in dates_to_process:
+                    process_date(date, force_refresh=True)  # Force refresh for empty data too
 
         # Store the processed dates info in session state for admin panel
+        processed_count = len(dates_to_process) if not force_refresh else len(date_range)
         if "processed_dates_count" not in st.session_state:
-            st.session_state.processed_dates_count = len(dates_to_process)
+            st.session_state.processed_dates_count = processed_count
         else:
-            st.session_state.processed_dates_count += len(dates_to_process)
+            st.session_state.processed_dates_count += processed_count
 
     # Store the cached dates info in session state for admin panel
-    if dates_from_cache:
+    if dates_from_cache and not force_refresh:
         st.session_state.cached_dates_count = len(dates_from_cache)
 
     # Get all data again after processing
@@ -230,18 +305,65 @@ def load_timeline_data(use_test_dates=False):
 
     return filtered_data
 
-# Load data
-timeline_data = load_timeline_data(use_test_dates=use_test_dates)
+# Check if we need to refresh data on page load
+if "check_empty_data" not in st.session_state:
+    st.session_state.check_empty_data = True
+
+# Load data with auto-refresh for empty data on first load
+if st.session_state.check_empty_data:
+    with st.spinner("Checking for empty data and refreshing if needed..."):
+        # Clear the cache to force a refresh of the data
+        st.cache_data.clear()
+        timeline_data = load_timeline_data(force_refresh=False)
+    # Set the flag to false so we don't check on every rerun
+    st.session_state.check_empty_data = False
+    logger.info("Refreshed data with check_empty_data=True")
+else:
+    timeline_data = load_timeline_data(force_refresh=False)
+    logger.debug("Loaded data from cache or processed new dates")
+
+# Check if there are any empty data entries
+empty_data_count = 0
+for data in timeline_data:
+    events = data.get("events", {})
+    total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+    if total_events == 0 or "error" in data:
+        empty_data_count += 1
+
+# Show a message if there are empty data entries
+if empty_data_count > 0:
+    st.warning(f"Found {empty_data_count} dates with no events data. You can use the 'Refresh Empty Data' button in the Admin panel to try to fill in the missing data using the LLM.")
 
 # Get event counts and significant events
 event_counts = count_events_by_category(timeline_data)
 significant_events = get_significant_events(timeline_data)
+
+# Create fallback data for empty dates
+date_range = get_date_range(days=days_to_show)
+for date in date_range:
+    if date not in event_counts:
+        # Add an empty entry for this date
+        event_counts[date] = {
+            "cme": 0,
+            "sunspot": 0,
+            "flares": 0,
+            "coronal_holes": 0,
+            "total": 0
+        }
+        logger.info(f"Added fallback empty data for date {date}")
 
 # Create timeline visualization
 st.header("Timeline of Space Weather Events")
 
 # Convert to DataFrame for plotting
 if event_counts:
+    # Log the event counts for debugging
+    logger.info(f"Event counts: {len(event_counts)} dates with data")
+    for date, counts in event_counts.items():
+        if counts["total"] > 0:
+            logger.debug(f"Date {date} has {counts['total']} events")
+
+    # Create a list of dictionaries for the DataFrame
     data_list = [
         {
             "date": date,
@@ -254,12 +376,17 @@ if event_counts:
         }
         for date, counts in event_counts.items()
     ]
+
+    # Create the DataFrame
     if data_list:
         timeline_df = pd.DataFrame(data_list).sort_values("date")
+        logger.info(f"Created DataFrame with {len(timeline_df)} rows")
     else:
         timeline_df = pd.DataFrame(columns=["date", "cme", "sunspot", "flares", "coronal_holes", "total", "significant"])
+        logger.warning("No data list created from event counts")
 else:
     timeline_df = pd.DataFrame(columns=["date", "cme", "sunspot", "flares", "coronal_holes", "total", "significant"])
+    logger.warning("No event counts available")
 
 # Create a color scale for significant events
 max_significant = timeline_df["significant"].max() if not timeline_df.empty and timeline_df["significant"].max() > 0 else 1
@@ -580,12 +707,12 @@ if "llm_model" in st.session_state:
 else:
     model_name = st.secrets.get("LLM_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
 
-st.markdown(f"Powered by LLM: {model_name}")
+st.markdown(f"Powered by OpenRouter LLM: {model_name}")
 
 # Add information about the app
 with st.expander("About this app"):
     st.markdown("""
-    This app scrapes data from spaceweather.com and uses the Groq LLM API to categorize space weather events into four main categories:
+    This app scrapes data from spaceweather.com and uses the OpenRouter API with the deepseek/deepseek-chat-v3-0324:free model to categorize space weather events into four main categories:
 
     1. **Coronal Mass Ejections (CME)** - Including filament eruptions, their size, and whether they are Earth-facing
     2. **Sunspot Activity** - Including expansion, creation, extreme maximum or minimum

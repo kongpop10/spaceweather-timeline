@@ -46,7 +46,7 @@ def get_all_data():
                     continue
     return all_data
 
-def get_date_range(days=30):
+def get_date_range(days=14):
     """
     Get a range of dates
 

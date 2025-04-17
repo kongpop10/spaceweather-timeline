@@ -1,5 +1,5 @@
 """
-Functions to process text with OpenRouter LLM
+Functions to process text with LLM (Grok or OpenRouter)
 """
 import json
 import requests
@@ -14,19 +14,34 @@ logger = logging.getLogger(__name__)
 def get_llm_config():
     """Get the LLM configuration from Streamlit secrets or session state"""
     try:
-        # Get API key from secrets
-        api_key = st.secrets.get("OPENROUTER_API_KEY", st.secrets.get("GROQ_API_KEY", ""))
+        # Get LLM provider from session state if available, otherwise from secrets
+        if "llm_provider" in st.session_state and st.session_state.llm_provider:
+            provider = st.session_state.llm_provider
+        else:
+            provider = st.secrets.get("LLM_PROVIDER", "grok")
 
         # Get base URL and model from session state if available, otherwise from secrets
         if "llm_base_url" in st.session_state and st.session_state.llm_base_url:
             base_url = st.session_state.llm_base_url
         else:
-            base_url = st.secrets.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+            base_url = st.secrets.get("LLM_BASE_URL", "https://api.x.ai/v1")
 
         if "llm_model" in st.session_state and st.session_state.llm_model:
             model = st.session_state.llm_model
         else:
-            model = st.secrets.get("LLM_MODEL", "deepseek/deepseek-chat-v3-0324:free")
+            model = st.secrets.get("LLM_MODEL", "grok-3-mini-beta")
+
+        # Get reasoning effort for Grok model
+        if "llm_reasoning_effort" in st.session_state and st.session_state.llm_reasoning_effort:
+            reasoning_effort = st.session_state.llm_reasoning_effort
+        else:
+            reasoning_effort = st.secrets.get("LLM_REASONING_EFFORT", "low")
+
+        # Get API key based on provider
+        if provider == "grok":
+            api_key = st.secrets.get("XAI_API_KEY", "")
+        else:  # openrouter
+            api_key = st.secrets.get("OPENROUTER_API_KEY", st.secrets.get("GROQ_API_KEY", ""))
 
         # Get site info for OpenRouter from session state if available, otherwise from secrets
         if "site_url" in st.session_state and st.session_state.site_url:
@@ -40,25 +55,29 @@ def get_llm_config():
             site_name = st.secrets.get("SITE_NAME", "Space Weather Timeline")
 
         return {
+            "provider": provider,
             "api_key": api_key,
             "base_url": base_url,
             "model": model,
+            "reasoning_effort": reasoning_effort,
             "site_url": site_url,
             "site_name": site_name
         }
     except Exception as e:
         logger.warning(f"Error getting LLM configuration: {e}")
         return {
+            "provider": "grok",
             "api_key": "",
-            "base_url": "https://openrouter.ai/api/v1",
-            "model": "deepseek/deepseek-chat-v3-0324:free",
+            "base_url": "https://api.x.ai/v1",
+            "model": "grok-3-mini-beta",
+            "reasoning_effort": "low",
             "site_url": "https://spaceweather-timeline.streamlit.app",
             "site_name": "Space Weather Timeline"
         }
 
 def analyze_spaceweather_data(sections):
     """
-    Analyze spaceweather data using Groq LLM
+    Analyze spaceweather data using Grok or OpenRouter LLM
 
     Args:
         sections (dict): Extracted sections from spaceweather.com
@@ -184,7 +203,7 @@ Only include events that are explicitly mentioned in the provided text. If no ev
 
 def call_llm(prompt):
     """
-    Call the LLM API using OpenRouter
+    Call the LLM API using Grok or OpenRouter
 
     Args:
         prompt (str): The prompt to send to the LLM
@@ -193,37 +212,56 @@ def call_llm(prompt):
         str: The LLM response
     """
     config = get_llm_config()
+    provider = config["provider"]
     api_key = config["api_key"]
     base_url = config["base_url"]
     model = config["model"]
     site_url = config["site_url"]
     site_name = config["site_name"]
+    reasoning_effort = config["reasoning_effort"]
 
     try:
-        # Create OpenAI client with OpenRouter base URL
+        # Create OpenAI client with appropriate base URL
         client = OpenAI(
             base_url=base_url,
             api_key=api_key,
         )
 
-        # Call the API
-        completion = client.chat.completions.create(
-            extra_headers={
-                "HTTP-Referer": site_url,  # Site URL for rankings on openrouter.ai
-                "X-Title": site_name,  # Site title for rankings on openrouter.ai
-            },
-            model=model,
-            messages=[
+        # Common parameters for both providers
+        common_params = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": "You are a helpful space weather expert that analyzes data from spaceweather.com and provides structured information about space weather events. Always respond with valid JSON."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2,
-            max_tokens=4000,
-            response_format={"type": "json_object"}  # Request JSON format explicitly
-        )
+            "temperature": 0.2,
+            "max_tokens": 4000,
+            "response_format": {"type": "json_object"}  # Request JSON format explicitly
+        }
+
+        # Provider-specific parameters
+        if provider == "grok":
+            # Add Grok-specific parameters
+            common_params["reasoning_effort"] = reasoning_effort
+            logger.info(f"Using Grok model: {model} with reasoning_effort: {reasoning_effort}")
+        else:  # openrouter
+            # Add OpenRouter-specific parameters
+            common_params["extra_headers"] = {
+                "HTTP-Referer": site_url,  # Site URL for rankings on openrouter.ai
+                "X-Title": site_name,  # Site title for rankings on openrouter.ai
+            }
+            logger.info(f"Using OpenRouter model: {model}")
+
+        # Call the API
+        completion = client.chat.completions.create(**common_params)
 
         # Extract the response content
         content = completion.choices[0].message.content
+
+        # For Grok, also log reasoning content if available
+        if provider == "grok" and hasattr(completion.choices[0].message, 'reasoning_content'):
+            reasoning = completion.choices[0].message.reasoning_content
+            logger.debug(f"Grok reasoning: {reasoning[:200]}...")
 
         # Log a sample of the response for debugging
         logger.debug(f"LLM response sample: {content[:200]}...")
@@ -231,7 +269,7 @@ def call_llm(prompt):
         return content
 
     except Exception as e:
-        logger.error(f"Error calling OpenRouter LLM API: {e}")
+        logger.error(f"Error calling {provider.capitalize()} LLM API: {e}")
         return None
 
 

@@ -32,10 +32,23 @@ A Streamlit application that scrapes data from [spaceweather.com](https://spacew
 3. Set up your configuration:
    - Create a `.streamlit/secrets.toml` file with the following settings:
      ```
-     GROQ_API_KEY = "your-api-key-here"
+     # API Keys
+     GROQ_API_KEY = "your-groq-api-key-here"
+     OPENROUTER_API_KEY = "your-openrouter-api-key-here"
+     XAI_API_KEY = "your-xai-api-key-here"
+
+     # Admin password
      password = "your-admin-password"
-     LLM_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-     LLM_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+
+     # LLM Configuration
+     LLM_PROVIDER = "grok"  # Options: "grok" or "openrouter"
+     LLM_BASE_URL = "https://api.x.ai/v1"
+     LLM_MODEL = "grok-3-mini-beta"
+     LLM_REASONING_EFFORT = "low"  # Options: "low", "medium", "high" (for Grok model)
+
+     # Site information for OpenRouter
+     SITE_URL = "https://spaceweather-timeline.streamlit.app"
+     SITE_NAME = "Space Weather Timeline"
      ```
 
 ## Usage
@@ -56,15 +69,16 @@ To access the admin features:
 1. Click on the "⚙️ Admin" expander in the sidebar
 2. Enter your admin password and click "Login"
 3. Once authenticated, you'll have access to:
-   - **LLM Configuration**: Update the base URL and model for the LLM
-   - **Data Management**: Toggle test dates, view cache status, clear cached data, and refresh data
+   - **LLM Configuration**: Select between Grok and OpenRouter LLM providers, and configure their settings
+   - **Data Management**: View cache status, clear cached data, and refresh data
+   - **Controls**: Adjust display settings and filter event categories
    - **Logout**: End your admin session
 
 ## Project Structure
 
 - `app.py`: Main Streamlit application
 - `scraper.py`: Functions to scrape spaceweather.com
-- `llm_processor.py`: Functions to process text with Groq LLM
+- `llm_processor.py`: Functions to process text with Grok or OpenRouter LLM
 - `data_manager.py`: Functions to store and retrieve data
 - `utils.py`: Utility functions
 - `data/`: Directory where scraped and processed data is stored
@@ -77,7 +91,7 @@ To access the admin features:
 - BeautifulSoup4
 - Pandas
 - Plotly
-- Groq API key
+- Grok API key (X.AI) or OpenRouter API key
 
 ## License
 

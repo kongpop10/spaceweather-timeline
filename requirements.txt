@@ -4,3 +4,4 @@ beautifulsoup4>=4.11.0
 pandas>=1.4.0
 plotly>=5.10.0
 openai>=1.0.0
+supabase>=0.7.1

@@ -151,7 +151,7 @@ For each event you identify, please provide the following structured information
 1. Tone of the event: "Normal" or "Significant" (significant means it could have notable effects on Earth or represents an unusual/extreme event)
 2. Date of the event (when it was observed)
 3. Predicted arrival time at Earth (if mentioned)
-4. Detailed description of the event
+4. Detailed description of the event (you can include basic HTML formatting like <p>, <strong>, <em>, <ul>, <li> tags in the detail field)
 5. Any image or link associated with this event (if available in the provided data)
 
 Here are the text snippets from the website:

@@ -5,13 +5,35 @@ import os
 import json
 from datetime import datetime, timedelta
 import logging
+import streamlit as st
 from utils import save_data, load_data, get_all_data, get_date_range
 from scraper import scrape_spaceweather, extract_spaceweather_sections
 from llm_processor import analyze_spaceweather_data
+from db_manager import (
+    init_db, save_data_to_db, load_data_from_db,
+    get_all_data_from_db, import_json_to_db,
+    get_unsynced_data, mark_as_synced
+)
+from supabase_sync import SupabaseClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Initialize database
+init_db()
+
+# Initialize Supabase client
+def get_supabase_client():
+    """Get a Supabase client"""
+    if not hasattr(st.session_state, 'supabase_client'):
+        url = st.secrets.get('SUPABASE_URL', '')
+        api_key = st.secrets.get('SUPABASE_API_KEY', '')
+        if url and api_key:
+            st.session_state.supabase_client = SupabaseClient(url, api_key)
+        else:
+            st.session_state.supabase_client = None
+    return st.session_state.supabase_client
 
 def process_date(date_str, force_refresh=False, max_retries=2):
     """
@@ -26,7 +48,15 @@ def process_date(date_str, force_refresh=False, max_retries=2):
         dict: Processed data
     """
     # Check if data already exists and we're not forcing a refresh
-    existing_data = load_data(date_str)
+    existing_data = load_data_from_db(date_str)
+
+    # If not in SQLite, try JSON files as fallback
+    if not existing_data:
+        existing_data = load_data(date_str)
+        # If found in JSON, import to SQLite
+        if existing_data:
+            save_data_to_db(existing_data)
+            logger.info(f"Imported data for {date_str} from JSON to SQLite")
 
     # Check if existing data is empty and we're forcing a refresh
     if existing_data and not force_refresh:
@@ -108,9 +138,23 @@ def process_date(date_str, force_refresh=False, max_retries=2):
             "error": analyzed_data.get("error", "LLM analysis failed") if analyzed_data else "LLM analysis failed"
         }
 
-    # Save the data
+    # Save the data to SQLite
+    save_data_to_db(analyzed_data)
+    logger.info(f"Data for {date_str} processed and saved to SQLite")
+
+    # Also save to JSON for backward compatibility
     save_data(analyzed_data, date_str)
-    logger.info(f"Data for {date_str} processed and saved")
+
+    # Try to sync with Supabase if client is available
+    supabase_client = get_supabase_client()
+    if supabase_client:
+        try:
+            if supabase_client.sync_date(analyzed_data):
+                logger.info(f"Data for {date_str} synced to Supabase")
+            else:
+                logger.warning(f"Failed to sync data for {date_str} to Supabase")
+        except Exception as e:
+            logger.error(f"Error syncing data to Supabase: {e}")
 
     return analyzed_data
 
@@ -219,6 +263,43 @@ def get_significant_events(data_list):
             logger.debug(f"Found {significant_count} significant events for {date}")
 
     return significant_events
+
+def sync_with_supabase():
+    """
+    Sync unsynced data with Supabase
+
+    Returns:
+        tuple: (success_count, total_count)
+    """
+    supabase_client = get_supabase_client()
+    if not supabase_client:
+        logger.warning("Supabase client not available")
+        return 0, 0
+
+    # Get unsynced data
+    unsynced_data = get_unsynced_data()
+    total_count = len(unsynced_data)
+    success_count = 0
+
+    for data in unsynced_data:
+        date_id = data.pop('id', None)  # Remove id from data before syncing
+        if supabase_client.sync_date(data):
+            mark_as_synced(date_id)
+            success_count += 1
+            logger.info(f"Data for {data.get('date')} synced to Supabase")
+        else:
+            logger.warning(f"Failed to sync data for {data.get('date')} to Supabase")
+
+    return success_count, total_count
+
+def import_all_json_to_db():
+    """
+    Import all JSON files to the SQLite database
+
+    Returns:
+        int: Number of files imported
+    """
+    return import_json_to_db()
 
 def count_events_by_category(data_list):
     """

@@ -9,5 +9,13 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-data/
+data/*.db
+data/*.json
 .streamlit/secrets.toml
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log

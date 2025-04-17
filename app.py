@@ -6,22 +6,26 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
-import re
 import logging
+import html
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 from utils import get_date_range
-from data_manager import process_date, process_date_range, get_significant_events, count_events_by_category, get_all_data
+from data_manager import (
+    process_date, process_date_range, get_significant_events,
+    count_events_by_category, import_all_json_to_db, sync_with_supabase
+)
+from db_manager import get_all_data_from_db
 
 # Set page config
 st.set_page_config(
     page_title="Space Weather Timeline",
     page_icon="☀️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS
@@ -73,16 +77,45 @@ st.markdown("""
     }
     .event-card p {
         color: inherit;
+        margin: 0.5em 0;
     }
     .event-card strong {
         color: inherit;
+        font-weight: bold;
     }
     .event-card.significant strong {
         font-weight: bold;
     }
-    .event-card img {
+    /* Styling for event card details section */
+    .event-card-details {
+        margin: 0.5em 0;
+        color: inherit;
+    }
+    .event-card-details p {
+        color: inherit;
+        margin: 0.5em 0;
+    }
+    .event-card-image {
+        margin-top: 1em;
+    }
+    /* Ensure proper styling for HTML elements in event details */
+    .event-card p strong, .event-card-details p strong {
+        font-weight: bold;
+    }
+    .event-card em, .event-card-details em {
+        font-style: italic;
+    }
+    .event-card ul, .event-card ol, .event-card-details ul, .event-card-details ol {
+        margin-left: 1.5em;
+        margin-top: 0.5em;
+        margin-bottom: 0.5em;
+    }
+    .event-card li, .event-card-details li {
+        margin-bottom: 0.25em;
+    }
+    .event-card img, .event-card-image img {
         max-width: 100%;
-        max-height: 300px;
+        max-height: 400px;
         height: auto;
         border-radius: 4px;
         margin-top: 10px;
@@ -273,9 +306,9 @@ with st.sidebar.expander("⚙️ Admin"):
         st.subheader("Data Management")
 
         # Show data cache status
-        existing_data = get_all_data()
+        existing_data = get_all_data_from_db()
         if existing_data:
-            st.info(f"Cache contains data for {len(existing_data)} dates")
+            st.info(f"Database contains data for {len(existing_data)} dates")
 
             # Display cached and processed dates info from the current session
             if "cached_dates_count" in st.session_state:
@@ -284,71 +317,163 @@ with st.sidebar.expander("⚙️ Admin"):
             if "processed_dates_count" in st.session_state:
                 st.info(f"✓ Processed {st.session_state.processed_dates_count} new dates in current session")
 
-            # Cache management buttons
-            col1, col2 = st.columns(2)
+            # Database management buttons
+            col1, col2, col3 = st.columns(3)
+
             with col1:
-                if st.button("Clear All Cached Data"):
-                    import shutil
-                    try:
-                        shutil.rmtree("data")
-                        st.success("Cache cleared successfully!")
-                        # Clear the Streamlit cache as well
-                        st.cache_data.clear()
-                        # Reset session state counters
-                        if "cached_dates_count" in st.session_state:
-                            del st.session_state.cached_dates_count
-                        if "processed_dates_count" in st.session_state:
-                            del st.session_state.processed_dates_count
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error clearing cache: {e}")
-
-            col2a, col2b = st.columns(2)
-            with col2a:
-                if st.button("Refresh All Data"):
-                    with st.spinner("Fetching latest data..."):
-                        # Force re-processing of the date range
-                        date_range = get_date_range(days=days_to_show)
-                        process_date_range(
-                            start_date=date_range[0],
-                            end_date=date_range[-1],
-                            force_refresh=True
-                        )
-                    st.success("All data refreshed!")
-                    st.rerun()
-
-            with col2b:
-                if st.button("Refresh Empty Data"):
-                    # Set the flag to check for empty data
-                    st.session_state.check_empty_data = True
-                    # Clear the cache to force a refresh
-                    st.cache_data.clear()
-
-                    # Get the date range
-                    date_range = get_date_range(days=days_to_show)
-
-                    # Find dates with empty data
-                    existing_data = get_all_data()
-                    dates_with_empty_data = []
-                    for data in existing_data:
-                        if data.get("date") in date_range:
-                            events = data.get("events", {})
-                            total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
-                            if total_events == 0 or "error" in data:
-                                dates_with_empty_data.append(data.get("date"))
-
-                    # Process empty dates with force_refresh=True
-                    if dates_with_empty_data:
-                        with st.spinner(f"Refreshing {len(dates_with_empty_data)} dates with empty data..."):
-                            for date in dates_with_empty_data:
-                                process_date(date, force_refresh=True)
-                        st.success(f"Refreshed {len(dates_with_empty_data)} dates with empty data!")
+                if st.button("Import JSON to DB"):
+                    with st.spinner("Importing JSON files to database..."):
+                        count = import_all_json_to_db()
+                    if count > 0:
+                        st.success(f"Imported {count} JSON files to database!")
                     else:
-                        st.info("No empty data found to refresh.")
-
+                        st.info("No JSON files to import.")
                     st.rerun()
+
+            with col2:
+                if st.button("Sync with Supabase"):
+                    with st.spinner("Syncing data with Supabase..."):
+                        success_count, total_count = sync_with_supabase()
+                    if total_count > 0:
+                        st.success(f"Synced {success_count}/{total_count} records with Supabase!")
+                    else:
+                        st.info("No data to sync.")
+
+            with col3:
+                # Initialize session state for refresh confirmation
+                if "show_refresh_confirmation" not in st.session_state:
+                    st.session_state.show_refresh_confirmation = False
+
+                # Show either the initial button or the confirmation dialog
+                if not st.session_state.show_refresh_confirmation:
+                    if st.button("Refresh All Data"):
+                        # Set the flag to show the confirmation dialog
+                        st.session_state.show_refresh_confirmation = True
+                        st.rerun()
+                else:
+                    # Show warning and confirmation buttons
+                    st.warning("⚠️ **WARNING**: This will erase all existing data for the current date range and fetch it again. This action cannot be undone.")
+
+                    # Create two columns for the confirm/cancel buttons
+                    confirm_col1, confirm_col2 = st.columns(2)
+
+                    with confirm_col1:
+                        if st.button("✅ Yes, Refresh All Data"):
+                            with st.spinner("Fetching latest data..."):
+                                # Force re-processing of the date range
+                                date_range = get_date_range(days=days_to_show)
+                                process_date_range(
+                                    start_date=date_range[0],
+                                    end_date=date_range[-1],
+                                    force_refresh=True
+                                )
+                            # Reset the confirmation flag
+                            st.session_state.show_refresh_confirmation = False
+                            st.success("All data refreshed!")
+                            st.rerun()
+
+                    with confirm_col2:
+                        if st.button("❌ Cancel"):
+                            # Reset the confirmation flag
+                            st.session_state.show_refresh_confirmation = False
+                            st.rerun()
+
+            # Second row of buttons
+            col4, col5 = st.columns(2)
+
+            with col4:
+                # Initialize session state for cache clear confirmation
+                if "show_cache_clear_confirmation" not in st.session_state:
+                    st.session_state.show_cache_clear_confirmation = False
+
+                # Show either the initial button or the confirmation dialog
+                if not st.session_state.show_cache_clear_confirmation:
+                    if st.button("Clear Streamlit Cache"):
+                        # Set the flag to show the confirmation dialog
+                        st.session_state.show_cache_clear_confirmation = True
+                        st.rerun()
+                else:
+                    # Show warning and confirmation buttons
+                    st.warning("⚠️ **WARNING**: This will clear all cached data. You may need to reload some data.")
+                    # Create two columns for the confirm/cancel buttons
+                    cache_confirm_col1, cache_confirm_col2 = st.columns(2)
+
+                    with cache_confirm_col1:
+                        if st.button("✅ Yes, Clear Cache"):
+                            st.cache_data.clear()
+                            # Reset session state counters
+                            if "cached_dates_count" in st.session_state:
+                                del st.session_state.cached_dates_count
+                            if "processed_dates_count" in st.session_state:
+                                del st.session_state.processed_dates_count
+                            # Reset the confirmation flag
+                            st.session_state.show_cache_clear_confirmation = False
+                            st.success("Streamlit cache cleared!")
+                            st.rerun()
+
+                    with cache_confirm_col2:
+                        if st.button("❌ Cancel", key="cancel_cache_clear"):
+                            # Reset the confirmation flag
+                            st.session_state.show_cache_clear_confirmation = False
+                            st.rerun()
+
+            with col5:
+                # Initialize session state for refresh empty data confirmation
+                if "show_refresh_empty_confirmation" not in st.session_state:
+                    st.session_state.show_refresh_empty_confirmation = False
+
+                # Show either the initial button or the confirmation dialog
+                if not st.session_state.show_refresh_empty_confirmation:
+                    if st.button("Refresh Empty Data"):
+                        # Set the flag to show the confirmation dialog
+                        st.session_state.show_refresh_empty_confirmation = True
+                        st.rerun()
+                else:
+                    # Show warning and confirmation buttons
+                    st.warning("⚠️ **WARNING**: This will attempt to refresh all empty data entries using the LLM.")
+                    # Create two columns for the confirm/cancel buttons
+                    empty_confirm_col1, empty_confirm_col2 = st.columns(2)
+
+                    with empty_confirm_col1:
+                        if st.button("✅ Yes, Refresh Empty Data"):
+                            # Set the flag to check for empty data
+                            st.session_state.check_empty_data = True
+                            # Clear the cache to force a refresh
+                            st.cache_data.clear()
+
+                            # Get the date range
+                            date_range = get_date_range(days=days_to_show)
+
+                            # Find dates with empty data
+                            existing_data = get_all_data_from_db()
+                            dates_with_empty_data = []
+                            for data in existing_data:
+                                if data.get("date") in date_range:
+                                    events = data.get("events", {})
+                                    total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+                                    if total_events == 0 or "error" in data:
+                                        dates_with_empty_data.append(data.get("date"))
+
+                            # Process empty dates with force_refresh=True
+                            if dates_with_empty_data:
+                                with st.spinner(f"Refreshing {len(dates_with_empty_data)} dates with empty data..."):
+                                    for date in dates_with_empty_data:
+                                        process_date(date, force_refresh=True)
+                                st.success(f"Refreshed {len(dates_with_empty_data)} dates with empty data!")
+                            else:
+                                st.info("No empty data found to refresh.")
+
+                            # Reset the confirmation flag
+                            st.session_state.show_refresh_empty_confirmation = False
+                            st.rerun()
+
+                    with empty_confirm_col2:
+                        if st.button("❌ Cancel", key="cancel_refresh_empty"):
+                            # Reset the confirmation flag
+                            st.session_state.show_refresh_empty_confirmation = False
+                            st.rerun()
         else:
-            st.warning("No cached data available")
+            st.warning("No data available in database")
 
         # Date Display Controls
         st.subheader("📅 Date Display Controls")
@@ -539,7 +664,7 @@ def load_timeline_data(force_refresh=False):
         date_range = get_date_range(days=days_to_show)
 
     # Check if we need to process any dates
-    existing_data = get_all_data()
+    existing_data = get_all_data_from_db()
     existing_dates = [data.get("date") for data in existing_data]
 
     # Identify which dates need to be processed
@@ -586,7 +711,7 @@ def load_timeline_data(force_refresh=False):
         st.session_state.cached_dates_count = len(dates_from_cache)
 
     # Get all data again after processing
-    all_data = get_all_data()
+    all_data = get_all_data_from_db()
 
     # Filter by date range
     filtered_data = [data for data in all_data if data.get("date") in date_range]
@@ -926,21 +1051,32 @@ if st.session_state.selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
-                        # Get the event details and sanitize any HTML content
+                        # Get the event details
                         detail = event.get('detail', 'No details available')
-                        # Remove any HTML tags from the detail text
-                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+                        # Ensure we have a string and unescape any HTML entities
+                        detail = html.unescape(detail) if detail else 'No details available'
 
-                        st.markdown(f"""
+                        # Create the card header and metadata
+                        card_html = f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Coronal Mass Ejection</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                             {f"<p><strong>Predicted Arrival:</strong> {event.get('predicted_arrival')}</p>" if event.get('predicted_arrival') else ""}
-                            <p><strong>Details:</strong> {detail}</p>
-                            {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        """
+
+                        # Render the card header
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+                        # Render the details section separately
+                        st.markdown(f"<div class='event-card-details'><p><strong>Details:</strong></p>{detail}</div>", unsafe_allow_html=True)
+
+                        # Render the image if available
+                        if event.get('image_url'):
+                            st.markdown(f"<div class='event-card-image'><img src='{event.get('image_url')}' width='100%' /></div>", unsafe_allow_html=True)
+
+                        # Close the card
+                        st.markdown("</div>", unsafe_allow_html=True)
                 else:
                     st.info("No CME events recorded for this date.")
             else:
@@ -954,20 +1090,31 @@ if st.session_state.selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
-                        # Get the event details and sanitize any HTML content
+                        # Get the event details
                         detail = event.get('detail', 'No details available')
-                        # Remove any HTML tags from the detail text
-                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+                        # Ensure we have a string and unescape any HTML entities
+                        detail = html.unescape(detail) if detail else 'No details available'
 
-                        st.markdown(f"""
+                        # Create the card header and metadata
+                        card_html = f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Sunspot Activity</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
-                            <p><strong>Details:</strong> {detail}</p>
-                            {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        """
+
+                        # Render the card header
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+                        # Render the details section separately
+                        st.markdown(f"<div class='event-card-details'><p><strong>Details:</strong></p>{detail}</div>", unsafe_allow_html=True)
+
+                        # Render the image if available
+                        if event.get('image_url'):
+                            st.markdown(f"<div class='event-card-image'><img src='{event.get('image_url')}' width='100%' /></div>", unsafe_allow_html=True)
+
+                        # Close the card
+                        st.markdown("</div>", unsafe_allow_html=True)
                 else:
                     st.info("No sunspot events recorded for this date.")
             else:
@@ -981,20 +1128,31 @@ if st.session_state.selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
-                        # Get the event details and sanitize any HTML content
+                        # Get the event details
                         detail = event.get('detail', 'No details available')
-                        # Remove any HTML tags from the detail text
-                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+                        # Ensure we have a string and unescape any HTML entities
+                        detail = html.unescape(detail) if detail else 'No details available'
 
-                        st.markdown(f"""
+                        # Create the card header and metadata
+                        card_html = f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Solar Flare</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
-                            <p><strong>Details:</strong> {detail}</p>
-                            {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        """
+
+                        # Render the card header
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+                        # Render the details section separately
+                        st.markdown(f"<div class='event-card-details'><p><strong>Details:</strong></p>{detail}</div>", unsafe_allow_html=True)
+
+                        # Render the image if available
+                        if event.get('image_url'):
+                            st.markdown(f"<div class='event-card-image'><img src='{event.get('image_url')}' width='100%' /></div>", unsafe_allow_html=True)
+
+                        # Close the card
+                        st.markdown("</div>", unsafe_allow_html=True)
                 else:
                     st.info("No solar flare events recorded for this date.")
             else:
@@ -1008,21 +1166,32 @@ if st.session_state.selected_date:
                         if show_significant_only and event.get("tone") != "Significant":
                             continue
 
-                        # Get the event details and sanitize any HTML content
+                        # Get the event details
                         detail = event.get('detail', 'No details available')
-                        # Remove any HTML tags from the detail text
-                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+                        # Ensure we have a string and unescape any HTML entities
+                        detail = html.unescape(detail) if detail else 'No details available'
 
-                        st.markdown(f"""
+                        # Create the card header and metadata
+                        card_html = f"""
                         <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
                             <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Coronal Hole</h4>
                             <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                             <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                             {f"<p><strong>Predicted Arrival:</strong> {event.get('predicted_arrival')}</p>" if event.get('predicted_arrival') else ""}
-                            <p><strong>Details:</strong> {detail}</p>
-                            {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        """
+
+                        # Render the card header
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+                        # Render the details section separately
+                        st.markdown(f"<div class='event-card-details'><p><strong>Details:</strong></p>{detail}</div>", unsafe_allow_html=True)
+
+                        # Render the image if available
+                        if event.get('image_url'):
+                            st.markdown(f"<div class='event-card-image'><img src='{event.get('image_url')}' width='100%' /></div>", unsafe_allow_html=True)
+
+                        # Close the card
+                        st.markdown("</div>", unsafe_allow_html=True)
                 else:
                     st.info("No coronal hole events recorded for this date.")
             else:
@@ -1048,19 +1217,29 @@ if not timeline_df.empty and timeline_df["significant"].sum() > 0:
             for category, category_events in events.items():
                 for event in category_events:
                     if event.get("tone") == "Significant":
-                        # Get the event details and sanitize any HTML content
+                        # Get the event details
                         detail = event.get('detail', 'No details available')
-                        # Remove any HTML tags from the detail text
-                        detail = re.sub(r'<.*?>', '', detail) if detail else 'No details available'
+                        # Ensure we have a string and unescape any HTML entities
+                        detail = html.unescape(detail) if detail else 'No details available'
 
-                        # Create a card for this significant event
-                        st.markdown(f"""
+                        # Create the card header
+                        card_html = f"""
                         <div class="event-card significant">
                             <h4>🚨 Significant {category.upper()} Event on {date}</h4>
-                            <p><strong>Details:</strong> {detail}</p>
-                            {f'<img src="{event.get("image_url")}" width="100%" />' if event.get('image_url') else ""}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        """
+
+                        # Render the card header
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+                        # Render the details section separately
+                        st.markdown(f"<div class='event-card-details'><p><strong>Details:</strong></p>{detail}</div>", unsafe_allow_html=True)
+
+                        # Render the image if available
+                        if event.get('image_url'):
+                            st.markdown(f"<div class='event-card-image'><img src='{event.get('image_url')}' width='100%' /></div>", unsafe_allow_html=True)
+
+                        # Close the card
+                        st.markdown("</div>", unsafe_allow_html=True)
 
     # Add a separator
     st.markdown("---")

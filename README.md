@@ -15,8 +15,9 @@ A Streamlit application that scrapes data from [spaceweather.com](https://spacew
   3. Solar Flares
   4. Coronal Holes
 - **Significance Highlighting**: Automatically identifies and highlights significant space weather events with taller bars in the timeline
+- **Forecast Feature**: Extends the timeline into the future to show forecasted space weather events based on predicted arrival times
 - **Detailed Event Cards**: Click on any date to view detailed information about the events on that day
-- **Admin Dashboard**: Password-protected admin section for data management, LLM configuration, and display settings
+- **Admin Dashboard**: Password-protected admin section for data management, LLM configuration, and display settings including a global days to display slider (1-30 days)
 - **SQLite Database**: Local storage of space weather data for improved performance and reliability
 - **Supabase Sync**: Synchronization with Supabase for cloud backup and sharing capabilities
 
@@ -81,7 +82,8 @@ streamlit run app.py
 ```
 
 The app will open in your default web browser. You can:
-- View the timeline of space weather events for the last 14 days by default
+- View the timeline of space weather events (default is 14 days, but can be set by admin from 1-30 days)
+- See forecasted space weather events for the next 3 days based on predicted arrival times
 - Adjust the date range using the slider in the sidebar
 - Filter events by category using the checkboxes
 - Click on any date in the timeline to view detailed event information
@@ -96,7 +98,7 @@ To access the admin features:
 3. Once authenticated, you'll have access to:
    - **LLM Configuration**: Select between Grok and OpenRouter LLM providers, and configure their settings
    - **Data Management**: Import JSON data to SQLite, sync with Supabase, refresh data, and manage cache
-   - **Controls**: Adjust display settings and filter event categories
+   - **Controls**: Adjust display settings and filter event categories, including a global days to display slider (1-30 days) that applies to all users
    - **Logout**: End your admin session
 
 ### Database Migration
@@ -115,7 +117,7 @@ After migration, the app will continue to save data in both JSON and SQLite form
 - `scraper.py`: Functions to scrape spaceweather.com
 - `llm_processor.py`: Functions to process text with Grok or OpenRouter LLM
 - `data_manager.py`: Functions to store and retrieve data
-- `db_manager.py`: SQLite database management functions
+- `db_manager.py`: SQLite database management functions, including app settings storage
 - `supabase_sync.py`: Supabase synchronization functions
 - `utils.py`: Utility functions
 - `data/`: Directory where scraped and processed data is stored (including SQLite database)
@@ -142,6 +144,10 @@ The repository includes a VBS script to create a Start Menu shortcut for easy ac
 
 ## Key Features
 
+### Forecast Feature
+
+The timeline now extends into the future to show forecasted space weather events based on predicted arrival times. These forecast events are displayed with a distinctive pattern and are based on the predicted arrival data processed by the LLM from historical observations. Forecast events are clearly marked with a 📊 icon and have a special styling to distinguish them from historical data.
+
 ### Automatic Data Filling
 
 The app uses LLM to automatically fill in missing data when you refresh the page. If there are dates in your selected range with no data, the app will attempt to use the LLM to analyze and categorize events for those dates.
@@ -161,6 +167,10 @@ The event view section is designed to be compatible with dark mode for comfortab
 ### Confirmation Warnings
 
 The app displays confirmation warnings for potentially destructive actions like refreshing all data to prevent accidental data loss.
+
+### Admin-Controlled Timeline Range
+
+Administrators can set a global default for the number of days displayed in the timeline (from 1 to 30 days) using a slider in the admin panel. This setting is stored in the database and applies to all users accessing the app, ensuring a consistent viewing experience.
 
 ## Deployment
 

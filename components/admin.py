@@ -8,7 +8,6 @@ from data_manager import (
     process_date_range, import_all_json_to_db, sync_with_supabase
 )
 from db_manager import get_all_data_from_db
-from utils import get_date_range
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -189,7 +188,14 @@ def render_data_management(days_to_show):
                     if st.button("✅ Yes, Refresh All Data"):
                         with st.spinner("Fetching latest data..."):
                             # Force re-processing of the date range
-                            date_range = get_date_range(days=days_to_show)
+                            # Calculate date range with forecast days to include future dates
+                            forecast_days = 3  # Number of days to forecast into the future
+                            from date_utils import calculate_date_range
+                            _, _, date_range = calculate_date_range(
+                                admin_selected_date=st.session_state.admin_selected_date,
+                                days_to_show=days_to_show,
+                                forecast_days=forecast_days
+                            )
                             process_date_range(
                                 start_date=date_range[0],
                                 end_date=date_range[-1],
@@ -261,8 +267,14 @@ def render_data_management(days_to_show):
                         # Clear the cache to force a refresh
                         st.cache_data.clear()
 
-                        # Get the date range
-                        date_range = get_date_range(days=days_to_show)
+                        # Calculate date range with forecast days to include future dates
+                        forecast_days = 3  # Number of days to forecast into the future
+                        from date_utils import calculate_date_range
+                        _, _, date_range = calculate_date_range(
+                            admin_selected_date=st.session_state.admin_selected_date,
+                            days_to_show=days_to_show,
+                            forecast_days=forecast_days
+                        )
 
                         # Find dates with empty data
                         existing_data = get_all_data_from_db()
@@ -321,23 +333,44 @@ def render_date_controls(days_to_show):
 
     with col1:
         # Date picker for selecting a specific date
+        # Ensure the selected date is within the valid range
+        today = datetime.now()
+        min_date = today - timedelta(days=365)
+
+        # Parse the selected date
+        try:
+            selected_date = datetime.strptime(st.session_state.selected_date, "%Y-%m-%d") if st.session_state.admin_selected_date is None else datetime.strptime(st.session_state.admin_selected_date, "%Y-%m-%d")
+            # Ensure it's not in the future
+            if selected_date > today:
+                selected_date = today
+        except:
+            selected_date = today
+
         admin_date = st.date_input(
             "Select a date to display",
-            value=datetime.strptime(st.session_state.selected_date, "%Y-%m-%d") if st.session_state.admin_selected_date is None else datetime.strptime(st.session_state.admin_selected_date, "%Y-%m-%d"),
-            min_value=datetime.now() - timedelta(days=365),
-            max_value=datetime.now(),
+            value=selected_date,
+            min_value=min_date,
+            max_value=today,
             help="This date will be the focus of the display and will be selected in the main area"
         )
 
     with col2:
+        # Get the current default from the database
+        from db_manager import get_setting
+        current_default = int(get_setting('default_days_to_show', '14'))
+
+        # Use the current default as the initial value if admin_days_to_show is None
+        input_value = days_to_show if st.session_state.admin_days_to_show is not None else current_default
+
         # Number input for days to display
         admin_days = st.number_input(
             "Days to display",
             min_value=1,
             max_value=30,
-            value=days_to_show if st.session_state.admin_days_to_show is None else st.session_state.admin_days_to_show,
-            help="Number of days to show in the timeline, centered around the selected date"
+            value=input_value,
+            help="Number of days to show in the timeline, centered around the selected date. You can also use the slider in the Controls section."
         )
+        st.caption("You can also adjust this using the slider in the Controls section below.")
 
     # Create two columns for the buttons
     button_col1, button_col2 = st.columns(2)
@@ -378,10 +411,40 @@ def render_controls(days_to_show):
     """
     st.subheader("📊 Controls")
 
-    # Note: Days to display slider has been removed as requested
-    # Display current days setting as information
-    if st.session_state.admin_days_to_show is not None:
-        st.info(f"Using admin setting: {days_to_show} days to display")
+    # Add days to display slider
+    st.markdown("**Timeline Display Range**")
+    st.caption("This setting will be applied for all users accessing the app.")
+    # Get the current default from the database
+    from db_manager import get_setting
+    current_default = int(get_setting('default_days_to_show', '14'))
+
+    # Use the current default as the initial value if admin_days_to_show is None
+    slider_value = days_to_show if st.session_state.admin_days_to_show is not None else current_default
+
+    admin_days_slider = st.slider(
+        "Days to display (including forecast)",
+        min_value=1,
+        max_value=30,
+        value=slider_value,
+        help="Number of days to show in the timeline chart for all users. This setting will become the default for everyone accessing the app."
+    )
+
+    # Update session state if slider value changed
+    if admin_days_slider != days_to_show:
+        st.session_state.admin_days_to_show = admin_days_slider
+        days_to_show = admin_days_slider
+
+        # Save the setting to the database as the new default for all users
+        # This will also sync to Supabase if configured
+        from db_manager import save_setting
+        save_setting('default_days_to_show', str(admin_days_slider), 'Default number of days to show in the timeline')
+
+        # Update the default in session state
+        st.session_state.default_days_to_show = admin_days_slider
+
+        # Clear the cache to force data reload with new date range
+        st.cache_data.clear()
+        st.success(f"Timeline display range updated to {admin_days_slider} days for all users")
 
     # Category filters
     st.markdown("**Event Categories**")

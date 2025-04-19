@@ -8,6 +8,15 @@ def initialize_session_state():
     """
     Initialize all session state variables
     """
+    # Try to load default days to show from database
+    try:
+        from db_manager import get_setting
+        default_days_to_show = get_setting('default_days_to_show', '14')
+        # Convert to integer
+        default_days_to_show = int(default_days_to_show)
+    except Exception as e:
+        # If there's any error, use the default value
+        default_days_to_show = 14
     # Admin authentication
     if "admin_authenticated" not in st.session_state:
         st.session_state.admin_authenticated = False
@@ -42,6 +51,10 @@ def initialize_session_state():
 
     if "admin_days_to_show" not in st.session_state:
         st.session_state.admin_days_to_show = None
+
+    # Global default days to show
+    if "default_days_to_show" not in st.session_state:
+        st.session_state.default_days_to_show = default_days_to_show
 
     # Category filter variables
     if "show_cme" not in st.session_state:

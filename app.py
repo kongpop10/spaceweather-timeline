@@ -50,15 +50,19 @@ provider, model_name = get_current_llm_info()
 st.markdown("Tracking solar events from spaceweather.com using AI")
 
 # Render admin panel in sidebar
-# Get days_to_show from session state or use default
-days_to_show = st.session_state.admin_days_to_show if st.session_state.admin_days_to_show is not None else 14
-# Render admin panel and get updated days_to_show (though slider is now removed)
+# Get days_to_show from session state or use default from database
+from db_manager import get_setting
+default_days = int(get_setting('default_days_to_show', '14'))
+days_to_show = st.session_state.admin_days_to_show if st.session_state.admin_days_to_show is not None else default_days
+# Render admin panel and get updated days_to_show from the slider in the admin panel
 days_to_show = render_admin_panel(days_to_show)
 
-# Calculate date range
+# Calculate date range with forecast days
+forecast_days = 3  # Number of days to forecast into the future
 start_date, end_date, date_range = calculate_date_range(
     admin_selected_date=st.session_state.admin_selected_date,
-    days_to_show=days_to_show
+    days_to_show=days_to_show,
+    forecast_days=forecast_days
 )
 
 # Display date range in the main area
@@ -72,28 +76,35 @@ show_coronal_holes = st.session_state.show_coronal_holes
 show_significant_only = st.session_state.get("show_significant_only", False)
 
 # Process data for selected date range
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def load_timeline_data(force_refresh=False):
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour
+def load_timeline_data(force_refresh=False, days_to_show_param=None):
     """Load timeline data, using cached data when available
 
     Args:
         force_refresh (bool): Whether to force refresh the data even if it exists
+        days_to_show_param (int, optional): Number of days to show. Defaults to None.
 
     Returns:
         list: Filtered data for the selected date range
     """
-    # Calculate date range
+    # Use the passed days_to_show parameter if provided, otherwise use the global one
+    # This ensures the cache is invalidated when days_to_show changes
+    current_days_to_show = days_to_show_param if days_to_show_param is not None else days_to_show
+    # Calculate date range with forecast days
+    forecast_days = 3  # Number of days to forecast into the future
     _, _, date_range = calculate_date_range(
         admin_selected_date=st.session_state.admin_selected_date,
-        days_to_show=days_to_show
+        days_to_show=current_days_to_show,
+        forecast_days=forecast_days
     )
 
     # Check if we need to process any dates
     existing_data = get_all_data_from_db()
     existing_dates = [data.get("date") for data in existing_data]
 
-    # Identify which dates need to be processed
-    dates_to_process = [date for date in date_range if date not in existing_dates]
+    # Identify which dates need to be processed (only process dates up to today)
+    today = datetime.now().strftime("%Y-%m-%d")
+    dates_to_process = [date for date in date_range if date not in existing_dates and date <= today]
     dates_from_cache = [date for date in date_range if date in existing_dates]
 
     # If we have dates to process, check Supabase first
@@ -223,12 +234,13 @@ if st.session_state.check_empty_data:
     with st.spinner("Checking for empty data and refreshing if needed..."):
         # Clear the cache to force a refresh of the data
         st.cache_data.clear()
-        timeline_data = load_timeline_data(force_refresh=False)
+        timeline_data = load_timeline_data(force_refresh=False, days_to_show_param=days_to_show)
     # Set the flag to false so we don't check on every rerun
     st.session_state.check_empty_data = False
     logger.info("Refreshed data with check_empty_data=True")
 else:
-    timeline_data = load_timeline_data(force_refresh=False)
+    # Always pass the current days_to_show to ensure cache is properly keyed
+    timeline_data = load_timeline_data(force_refresh=False, days_to_show_param=days_to_show)
     logger.debug("Loaded data from cache or processed new dates")
 
 # Check if there are any empty data entries
@@ -250,14 +262,15 @@ if "from_supabase" in st.session_state and st.session_state.from_supabase:
     # Clear the flag after displaying the message
     st.session_state.from_supabase = []
 
-# Prepare timeline data
-event_counts, significant_events, timeline_df = prepare_timeline_data(timeline_data, date_range)
+# Prepare timeline data with forecasts
+show_forecasts = True  # Set to False to disable forecasts
+event_counts, significant_events, timeline_df = prepare_timeline_data(timeline_data, date_range, include_forecast=show_forecasts)
 
 # Create timeline visualization
 create_timeline_visualization(timeline_df, show_cme, show_sunspot, show_flares, show_coronal_holes)
 
 # Create date selector
-create_date_selector(timeline_df, significant_events, event_counts)
+create_date_selector(timeline_df, significant_events, event_counts, days_to_show)
 
 # Display events for selected date
 display_events(timeline_data, show_cme, show_sunspot, show_flares, show_coronal_holes, show_significant_only)
@@ -297,6 +310,9 @@ with st.expander("About this app"):
     - Associated images or links
 
     The timeline visualization highlights dates with significant events, and you can click on any date to view detailed information about the events on that day.
+
+    **Forecast Feature:**
+    The timeline also extends into the future to show forecasted space weather events based on predicted arrival times. These forecast events are displayed with a dashed pattern and are based on the predicted arrival data processed by the LLM from historical observations.
     """)
 
 # Run the app

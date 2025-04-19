@@ -125,6 +125,34 @@ def get_app_styles():
         font-weight: bold !important;
         box-shadow: 0 2px 4px rgba(75, 181, 255, 0.3) !important;
     }
+    /* Forecast date button styling */
+    .forecast-date-btn {
+        background-color: rgba(75, 181, 255, 0.1) !important;
+        border: 2px dashed #4bb5ff !important;
+        color: #4bb5ff !important;
+        font-style: italic !important;
+    }
+    /* Forecast event card styling */
+    .event-card.forecast {
+        border-left: 8px solid #4bb5ff;
+        background: linear-gradient(90deg, rgba(75, 181, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+        border-style: solid;
+        border-width: 1px 1px 1px 8px;
+        border-color: rgba(75, 181, 255, 0.5) rgba(75, 181, 255, 0.3) rgba(75, 181, 255, 0.3) #4bb5ff;
+    }
+    .event-card.forecast::before {
+        content: "FORECAST";
+        position: absolute;
+        top: -10px;
+        right: 10px;
+        background-color: #4bb5ff;
+        color: white;
+        font-size: 10px;
+        font-weight: bold;
+        padding: 2px 8px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
     /* Pulsing animation for significant events */
     @keyframes pulse {
         0% { transform: scale(1); opacity: 1; }

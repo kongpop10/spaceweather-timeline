@@ -7,7 +7,7 @@ import html
 def display_events(timeline_data, show_cme, show_sunspot, show_flares, show_coronal_holes, show_significant_only):
     """
     Display events for the selected date
-    
+
     Args:
         timeline_data (list): List of data for each date
         show_cme (bool): Whether to show CME events
@@ -49,7 +49,7 @@ def display_events(timeline_data, show_cme, show_sunspot, show_flares, show_coro
 def display_cme_events(events, show_cme, show_significant_only):
     """
     Display CME events
-    
+
     Args:
         events (dict): Dictionary of events by category
         show_cme (bool): Whether to show CME events
@@ -68,9 +68,16 @@ def display_cme_events(events, show_cme, show_significant_only):
                 detail = html.unescape(detail) if detail else 'No details available'
 
                 # Create the card header and metadata
+                is_forecast = event.get('is_forecast', False)
+                card_class = ''
+                if event.get('tone') == 'Significant':
+                    card_class = 'significant'
+                if is_forecast:
+                    card_class += ' forecast'
+
                 card_html = f"""
-                <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
-                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Coronal Mass Ejection</h4>
+                <div class="event-card {card_class}">
+                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}{'📊 ' if is_forecast else ''}Coronal Mass Ejection</h4>
                     <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                     <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                     {f"<p><strong>Predicted Arrival:</strong> {event.get('predicted_arrival')}</p>" if event.get('predicted_arrival') else ""}
@@ -96,7 +103,7 @@ def display_cme_events(events, show_cme, show_significant_only):
 def display_sunspot_events(events, show_sunspot, show_significant_only):
     """
     Display sunspot events
-    
+
     Args:
         events (dict): Dictionary of events by category
         show_sunspot (bool): Whether to show sunspot events
@@ -115,9 +122,16 @@ def display_sunspot_events(events, show_sunspot, show_significant_only):
                 detail = html.unescape(detail) if detail else 'No details available'
 
                 # Create the card header and metadata
+                is_forecast = event.get('is_forecast', False)
+                card_class = ''
+                if event.get('tone') == 'Significant':
+                    card_class = 'significant'
+                if is_forecast:
+                    card_class += ' forecast'
+
                 card_html = f"""
-                <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
-                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Sunspot Activity</h4>
+                <div class="event-card {card_class}">
+                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}{'📊 ' if is_forecast else ''}Sunspot Activity</h4>
                     <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                     <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                 """
@@ -142,7 +156,7 @@ def display_sunspot_events(events, show_sunspot, show_significant_only):
 def display_flare_events(events, show_flares, show_significant_only):
     """
     Display solar flare events
-    
+
     Args:
         events (dict): Dictionary of events by category
         show_flares (bool): Whether to show flare events
@@ -161,9 +175,16 @@ def display_flare_events(events, show_flares, show_significant_only):
                 detail = html.unescape(detail) if detail else 'No details available'
 
                 # Create the card header and metadata
+                is_forecast = event.get('is_forecast', False)
+                card_class = ''
+                if event.get('tone') == 'Significant':
+                    card_class = 'significant'
+                if is_forecast:
+                    card_class += ' forecast'
+
                 card_html = f"""
-                <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
-                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Solar Flare</h4>
+                <div class="event-card {card_class}">
+                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}{'📊 ' if is_forecast else ''}Solar Flare</h4>
                     <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                     <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                 """
@@ -188,7 +209,7 @@ def display_flare_events(events, show_flares, show_significant_only):
 def display_coronal_hole_events(events, show_coronal_holes, show_significant_only):
     """
     Display coronal hole events
-    
+
     Args:
         events (dict): Dictionary of events by category
         show_coronal_holes (bool): Whether to show coronal hole events
@@ -207,9 +228,16 @@ def display_coronal_hole_events(events, show_coronal_holes, show_significant_onl
                 detail = html.unescape(detail) if detail else 'No details available'
 
                 # Create the card header and metadata
+                is_forecast = event.get('is_forecast', False)
+                card_class = ''
+                if event.get('tone') == 'Significant':
+                    card_class = 'significant'
+                if is_forecast:
+                    card_class += ' forecast'
+
                 card_html = f"""
-                <div class="event-card {'significant' if event.get('tone') == 'Significant' else ''}">
-                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}Coronal Hole</h4>
+                <div class="event-card {card_class}">
+                    <h4>{'🚨 ' if event.get('tone') == 'Significant' else ''}{'📊 ' if is_forecast else ''}Coronal Hole</h4>
                     <p><strong>Tone:</strong> {event.get('tone', 'Unknown')}</p>
                     <p><strong>Date:</strong> {event.get('date', 'Unknown')}</p>
                     {f"<p><strong>Predicted Arrival:</strong> {event.get('predicted_arrival')}</p>" if event.get('predicted_arrival') else ""}
@@ -235,7 +263,7 @@ def display_coronal_hole_events(events, show_coronal_holes, show_significant_onl
 def display_significant_events_section(timeline_data, timeline_df):
     """
     Display the significant events section
-    
+
     Args:
         timeline_data (list): List of data for each date
         timeline_df (pd.DataFrame): DataFrame with timeline data
@@ -261,9 +289,14 @@ def display_significant_events_section(timeline_data, timeline_df):
                             detail = html.unescape(detail) if detail else 'No details available'
 
                             # Create the card header
+                            is_forecast = event.get('is_forecast', False)
+                            card_class = 'significant'
+                            if is_forecast:
+                                card_class += ' forecast'
+
                             card_html = f"""
-                            <div class="event-card significant">
-                                <h4>🚨 Significant {category.upper()} Event on {date}</h4>
+                            <div class="event-card {card_class}">
+                                <h4>🚨 {'📊 ' if is_forecast else ''}Significant {category.upper()} Event on {date}</h4>
                             """
 
                             # Render the card header

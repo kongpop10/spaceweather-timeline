@@ -252,11 +252,14 @@ def process_date_range(start_date=None, end_date=None, days=30, force_refresh=Fa
         current_date_obj = earliest_date
         logger.warning(f"Adjusted start date to {earliest_date.strftime('%Y-%m-%d')} to avoid scraping too far in the past")
 
-    # Generate date range
+    # Generate date range (only include dates up to today)
     date_range = []
     temp_date_obj = current_date_obj
+    today_obj = datetime.now()
     while temp_date_obj <= end_date_obj:
-        date_range.append(temp_date_obj.strftime("%Y-%m-%d"))
+        # Only include dates up to today for scraping
+        if temp_date_obj <= today_obj:
+            date_range.append(temp_date_obj.strftime("%Y-%m-%d"))
         temp_date_obj += timedelta(days=1)
 
     # If not forcing refresh, try to get data from Supabase for the entire date range
@@ -381,6 +384,74 @@ def import_all_json_to_db():
         int: Number of files imported
     """
     return import_json_to_db()
+
+def generate_forecast_data(data_list, date_range):
+    """
+    Generate forecast data based on predicted arrival times in the data
+
+    Args:
+        data_list (list): List of processed data
+        date_range (list): List of dates in the range
+
+    Returns:
+        dict: Dictionary with forecast data by date
+    """
+    forecast_data = {}
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Identify which dates in the date_range are in the future
+    future_dates = [date for date in date_range if date > today]
+
+    if not future_dates:
+        return forecast_data
+
+    # Look through all data for predicted arrival times
+    for data in data_list:
+        if not data or "events" not in data:
+            continue
+
+        events = data.get("events", {})
+
+        # Check each category for events with predicted_arrival dates
+        for category, category_events in events.items():
+            if not isinstance(category_events, list):
+                continue
+
+            for event in category_events:
+                if not isinstance(event, dict):
+                    continue
+
+                predicted_arrival = event.get("predicted_arrival")
+                if not predicted_arrival or predicted_arrival not in future_dates:
+                    continue
+
+                # Create forecast entry for this date if it doesn't exist
+                if predicted_arrival not in forecast_data:
+                    forecast_data[predicted_arrival] = {
+                        "date": predicted_arrival,
+                        "is_forecast": True,
+                        "events": {
+                            "cme": [],
+                            "sunspot": [],
+                            "flares": [],
+                            "coronal_holes": []
+                        }
+                    }
+
+                # Add this event to the forecast
+                forecast_event = {
+                    "tone": event.get("tone", "Normal"),
+                    "date": data.get("date"),  # Original observation date
+                    "predicted_arrival": predicted_arrival,
+                    "detail": f"<p><strong>Forecast:</strong> {event.get('detail', '')}</p>",
+                    "image_url": event.get("image_url"),
+                    "is_forecast": True
+                }
+
+                forecast_data[predicted_arrival]["events"][category].append(forecast_event)
+
+    logger.info(f"Generated forecast data for {len(forecast_data)} future dates")
+    return forecast_data
 
 def count_events_by_category(data_list):
     """

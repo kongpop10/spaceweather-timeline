@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import logging
+from datetime import datetime
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -66,6 +67,58 @@ def create_timeline_visualization(timeline_df, show_cme, show_sunspot, show_flar
                 customdata=timeline_df[["coronal_holes", "sig_coronal_holes"]].values
             ))
 
+        # Add forecast indicators if there are any forecast dates
+        if "is_forecast" in timeline_df.columns and timeline_df["is_forecast"].any():
+            # Add a vertical line at today's date to separate historical from forecast
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            # Add a shape instead of vline to avoid type errors
+            fig.add_shape(
+                type="line",
+                x0=today,
+                x1=today,
+                y0=0,
+                y1=1,
+                yref="paper",
+                line=dict(color="rgba(0, 0, 0, 0.5)", width=2),  # Solid line instead of dashed
+            )
+
+            # Add annotation for today's line
+            fig.add_annotation(
+                x=today,
+                y=1,
+                yref="paper",
+                text="Today",
+                showarrow=False,
+                xanchor="right",
+                yanchor="top",
+                bgcolor="rgba(255, 255, 255, 0.5)",
+                bordercolor="rgba(0, 0, 0, 0.5)",
+                borderwidth=1,
+                borderpad=4,
+                font=dict(size=10)
+            )
+
+            # Add patterns to forecast bars
+            for trace in fig.data:
+                # Apply pattern to all bars but make it visible only for forecast dates
+                dates = timeline_df["date"].tolist()
+                is_forecast = timeline_df["is_forecast"].tolist()
+
+                # Create a list of patterns for each date
+                patterns = []
+                for idx in range(len(dates)):
+                    if idx < len(is_forecast) and is_forecast[idx]:
+                        patterns.append("/")
+                    else:
+                        patterns.append("")
+
+                trace.marker.pattern = {
+                    "shape": patterns,
+                    "solidity": 0.5,
+                    "fgopacity": 0.5
+                }
+
         # Update layout
         fig.update_layout(
             xaxis_title="Date",
@@ -88,7 +141,7 @@ def create_timeline_visualization(timeline_df, show_cme, show_sunspot, show_flar
     else:
         st.info("No data available for the timeline. Try refreshing the data or selecting a different date range.")
 
-def create_date_selector(timeline_df, significant_events, event_counts):
+def create_date_selector(timeline_df, significant_events, event_counts, days_to_show=14):
     """
     Create the date selector
 
@@ -96,14 +149,15 @@ def create_date_selector(timeline_df, significant_events, event_counts):
         timeline_df (pd.DataFrame): DataFrame with timeline data
         significant_events (dict): Dictionary of significant events by date
         event_counts (dict): Dictionary of event counts by date
+        days_to_show (int, optional): Number of days to show in the date selector. Defaults to 14.
     """
     # Add date selector - different headings for mobile and desktop
     st.markdown("<div class='date-selector-heading desktop-date-buttons'><h3>📅 Select a date to view details</h3></div>", unsafe_allow_html=True)
     st.markdown("<div class='date-selector-heading mobile-date-selector'><h3>📅 Date Selection</h3></div>", unsafe_allow_html=True)
 
     if not timeline_df.empty:
-        # Show up to 14 dates at once (default days_to_show value)
-        max_dates_to_show = min(14, len(timeline_df))
+        # Show up to days_to_show dates at once
+        max_dates_to_show = min(days_to_show, len(timeline_df))
         date_groups = [timeline_df["date"].tolist()[0:max_dates_to_show]]
 
         # Use the first group of dates by default
@@ -125,8 +179,17 @@ def create_date_selector(timeline_df, significant_events, event_counts):
         # Use all dates from timeline_df, not just the current group
         for date in timeline_df["date"].tolist():
             is_significant = date in significant_events
+            is_forecast = False
+            if "is_forecast" in timeline_df.columns:
+                is_forecast = timeline_df.loc[timeline_df["date"] == date, "is_forecast"].iloc[0]
+
             # More concise format for mobile
-            date_display = f"{date.split('-')[2]} {date.split('-')[1]}/{date.split('-')[0][2:]} 🚨" if is_significant else f"{date.split('-')[2]} {date.split('-')[1]}/{date.split('-')[0][2:]}"
+            date_display = f"{date.split('-')[2]} {date.split('-')[1]}/{date.split('-')[0][2:]}"
+            if is_significant:
+                date_display += " 🚨"
+            if is_forecast:
+                date_display += " 📊"
+
             date_options[date] = date_display
 
         # Create a selectbox for mobile view
@@ -150,6 +213,14 @@ def create_date_selector(timeline_df, significant_events, event_counts):
                 is_significant = date in significant_events
                 date_display = date.split("-")[2]  # Just show the day
 
+                # Check if this date is a forecast
+                is_forecast = False
+                if "is_forecast" in timeline_df.columns:
+                    is_forecast = timeline_df.loc[timeline_df["date"] == date, "is_forecast"].iloc[0]
+
+                if is_forecast:
+                    date_display += " 📊"
+
                 with cols[i]:
                     # Apply custom class to significant date buttons
                     # Check if this date is the currently selected date
@@ -163,7 +234,7 @@ def create_date_selector(timeline_df, significant_events, event_counts):
                     if st.button(
                         button_label,
                         key=f"date_{date}",
-                        help=f"{date}: {event_counts.get(date, {}).get('total', 0)} events, {significant_events.get(date, 0)} significant"
+                        help=f"{date}: {event_counts.get(date, {}).get('total', 0)} events, {significant_events.get(date, 0)} significant" + (" (Forecast)" if is_forecast else "")
                     ):
                         st.session_state.selected_date = date
                         # Rerun the app to update the UI immediately
@@ -179,6 +250,10 @@ def create_date_selector(timeline_df, significant_events, event_counts):
                     if is_significant:
                         st.markdown(js_code.format(date=date, css_class="significant-date-btn"), unsafe_allow_html=True)
 
+                    # Add forecast styling if this is a forecast date
+                    if is_forecast:
+                        st.markdown(js_code.format(date=date, css_class="forecast-date-btn"), unsafe_allow_html=True)
+
                     # Add selected styling if this is the selected date
                     if is_selected:
                         st.markdown(js_code.format(date=date, css_class="selected-date-btn"), unsafe_allow_html=True)
@@ -186,22 +261,39 @@ def create_date_selector(timeline_df, significant_events, event_counts):
     else:
         st.warning("No data available for the selected date range. Try refreshing the data or selecting a different date range.")
 
-def prepare_timeline_data(timeline_data, date_range):
+def prepare_timeline_data(timeline_data, date_range, include_forecast=True):
     """
     Prepare timeline data for visualization
 
     Args:
         timeline_data (list): List of data for each date
         date_range (list): List of dates in the range
+        include_forecast (bool): Whether to include forecast data
 
     Returns:
         tuple: (event_counts, significant_events, timeline_df)
     """
-    from data_manager import count_events_by_category, get_significant_events
+    from data_manager import count_events_by_category, get_significant_events, generate_forecast_data
 
     # Get event counts and significant events
     event_counts = count_events_by_category(timeline_data)
     significant_events = get_significant_events(timeline_data)
+
+    # Generate forecast data if requested
+    forecast_data = {}
+    if include_forecast:
+        forecast_data = generate_forecast_data(timeline_data, date_range)
+
+        # Add forecast data to timeline_data
+        for date, data in forecast_data.items():
+            timeline_data.append(data)
+
+        # Update event counts and significant events with forecast data
+        forecast_event_counts = count_events_by_category(list(forecast_data.values()))
+        event_counts.update(forecast_event_counts)
+
+        forecast_significant_events = get_significant_events(list(forecast_data.values()))
+        significant_events.update(forecast_significant_events)
 
     # Create fallback data for empty dates
     for date in date_range:
@@ -258,6 +350,11 @@ def prepare_timeline_data(timeline_data, date_range):
             sig_flares_count = 0
             sig_coronal_holes_count = 0
 
+            # Check if this is a forecast date
+            is_forecast = False
+            if date_data and date_data.get("is_forecast", False):
+                is_forecast = True
+
             # If we have data for this date, calculate weighted values
             if date_data and "events" in date_data:
                 events = date_data.get("events", {})
@@ -296,7 +393,8 @@ def prepare_timeline_data(timeline_data, date_range):
                 "sig_flares": sig_flares_count,
                 "sig_coronal_holes": sig_coronal_holes_count,
                 "total": counts["total"],
-                "significant": sig_count
+                "significant": sig_count,
+                "is_forecast": is_forecast
             })
 
         # Create the DataFrame
@@ -304,10 +402,10 @@ def prepare_timeline_data(timeline_data, date_range):
             timeline_df = pd.DataFrame(data_list).sort_values("date")
             logger.info(f"Created DataFrame with {len(timeline_df)} rows")
         else:
-            timeline_df = pd.DataFrame(columns=["date", "cme", "sunspot", "flares", "coronal_holes", "total", "significant"])
+            timeline_df = pd.DataFrame(columns=["date", "cme", "sunspot", "flares", "coronal_holes", "total", "significant", "is_forecast"])
             logger.warning("No data list created from event counts")
     else:
-        timeline_df = pd.DataFrame(columns=["date", "cme", "sunspot", "flares", "coronal_holes", "total", "significant"])
+        timeline_df = pd.DataFrame(columns=["date", "cme", "sunspot", "flares", "coronal_holes", "total", "significant", "is_forecast"])
         logger.warning("No event counts available")
 
     # Create a color scale for significant events

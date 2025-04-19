@@ -7,13 +7,14 @@ import logging
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def calculate_date_range(admin_selected_date=None, days_to_show=14):
+def calculate_date_range(admin_selected_date=None, days_to_show=14, forecast_days=3):
     """
     Calculate the date range based on admin_selected_date and days_to_show
 
     Args:
         admin_selected_date (str): Admin selected date in format YYYY-MM-DD
         days_to_show (int): Number of days to show
+        forecast_days (int): Number of days to forecast into the future
 
     Returns:
         tuple: (start_date, end_date, date_range)
@@ -31,10 +32,12 @@ def calculate_date_range(admin_selected_date=None, days_to_show=14):
         try:
             # Use the admin selected date as the center date
             center_date = datetime.strptime(admin_selected_date, "%Y-%m-%d")
-            # Make sure center_date is not in the future
-            if center_date > today:
-                center_date = today
-                logger.warning(f"Adjusted center date to today ({today.strftime('%Y-%m-%d')}) to avoid future dates")
+            # Allow center_date to be in the future for forecast purposes
+            # but limit it to today + forecast_days
+            max_future_date = today + timedelta(days=forecast_days)
+            if center_date > max_future_date:
+                center_date = max_future_date
+                logger.warning(f"Adjusted center date to max future date ({max_future_date.strftime('%Y-%m-%d')})")
 
             # Calculate half the days to show on each side of the center date
             half_days = days_to_show // 2
@@ -43,27 +46,32 @@ def calculate_date_range(admin_selected_date=None, days_to_show=14):
             start_date = center_date - timedelta(days=half_days)
             end_date = center_date + timedelta(days=half_days)
 
-            # Adjust if end_date is in the future
-            if end_date > today:
-                end_date = today
+            # Adjust if end_date is too far in the future
+            max_end_date = today + timedelta(days=forecast_days)
+            if end_date > max_end_date:
+                end_date = max_end_date
                 # Shift start date to maintain the requested number of days if possible
                 start_date = end_date - timedelta(days=days_to_show - 1)  # -1 because we want to include the end date
         except Exception as e:
             # If there's any error parsing the admin_selected_date, fall back to default behavior
             logger.error(f"Error processing admin_selected_date: {e}. Using default date range.")
-            end_date = today
-            start_date = end_date - timedelta(days=days_to_show - 1)
+            end_date = today + timedelta(days=forecast_days)
+            start_date = today - timedelta(days=days_to_show - forecast_days - 1)
     else:
-        # Use today as the end date
-        end_date = today
+        # Use today + forecast_days as the end date
+        end_date = today + timedelta(days=forecast_days)
         # Calculate start date based on days_to_show
-        start_date = end_date - timedelta(days=days_to_show - 1)  # -1 because we want to include the end date
+        start_date = today - timedelta(days=days_to_show - forecast_days - 1)  # -1 because we want to include the end date
 
-    # Generate date range
+    # Generate date range including future dates for forecast
     date_range = []
     current_date = start_date
     while current_date <= end_date:
-        date_range.append(current_date.strftime("%Y-%m-%d"))
+        date_str = current_date.strftime("%Y-%m-%d")
+        date_range.append(date_str)
         current_date += timedelta(days=1)
+
+    # Log the date range
+    logger.info(f"Date range: {date_range[0]} to {date_range[-1]} ({len(date_range)} days)")
 
     return start_date, end_date, date_range

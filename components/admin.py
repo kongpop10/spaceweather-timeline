@@ -36,7 +36,7 @@ def render_admin_panel(days_to_show):
             st.success("Authenticated as Admin")
 
             # LLM Configuration
-            days_to_show = render_llm_config()
+            days_to_show = render_llm_config(days_to_show)
 
             # Data Management
             render_data_management(days_to_show)
@@ -54,9 +54,15 @@ def render_admin_panel(days_to_show):
 
     return days_to_show
 
-def render_llm_config():
+def render_llm_config(days_to_show):
     """
     Render the LLM configuration section
+
+    Args:
+        days_to_show (int): Current number of days to show
+
+    Returns:
+        int: Unchanged days_to_show value
     """
     st.subheader("LLM Configuration")
 
@@ -126,6 +132,9 @@ def render_llm_config():
 
         st.success(f"LLM configuration updated to {new_provider.capitalize()}!")
         st.rerun()
+
+    # Return the days_to_show value unchanged
+    return days_to_show
 
 def render_data_management(days_to_show):
     """

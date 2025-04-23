@@ -2,6 +2,20 @@
 
 This test script helps diagnose issues with scraping data from spaceweather.com and processing it with the LLM.
 
+## Setup
+
+Before running the test, you need to set up the API key:
+
+1. **Option 1**: Set the API key as an environment variable:
+   ```
+   set XAI_API_KEY=your-api-key-here
+   ```
+
+2. **Option 2**: Add the API key to `.streamlit/secrets.toml`:
+   ```toml
+   XAI_API_KEY = "your-api-key-here"
+   ```
+
 ## How to Run the Test
 
 1. Run the test script with a specific date:

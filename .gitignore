@@ -19,3 +19,15 @@ data/*.json
 
 # Logs
 *.log
+
+# Test files
+test_*.txt
+test_*.html
+test_*.json
+test_sections_*.json
+test_raw_html_*.html
+test_extracted_text_*.txt
+test_prompt_*.txt
+test_reasoning_*.txt
+test_response_*.json
+test_results_*.json

@@ -151,8 +151,15 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
     dates_with_empty_data = []
     for data in existing_data:
         if data.get("date") in date_range:
-            # Skip future dates
-            if data.get("date") > today:
+            # Skip future dates by comparing datetime objects
+            try:
+                date_obj = datetime.strptime(data.get("date"), "%Y-%m-%d")
+                today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                if date_obj > today_obj:
+                    continue
+            except (ValueError, TypeError):
+                # If we can't parse the date, skip this entry
                 continue
 
             # Skip dates marked as forecasts
@@ -212,17 +219,31 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
             if force_refresh:
                 # Process all dates with force_refresh=True (except future dates)
                 for date in date_range:
-                    # Skip future dates
-                    if date > today:
-                        logger.info(f"Skipping future date {date} during force refresh")
+                    # Skip future dates by comparing datetime objects
+                    try:
+                        date_obj = datetime.strptime(date, "%Y-%m-%d")
+                        today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                        if date_obj > today_obj:
+                            logger.info(f"Skipping future date {date} during force refresh")
+                            continue
+                    except ValueError:
+                        logger.error(f"Error parsing date {date}")
                         continue
                     process_date(date, force_refresh=True)
             else:
                 # Process only new dates and dates with empty data (except future dates)
                 for date in dates_to_process:
-                    # Skip future dates
-                    if date > today:
-                        logger.info(f"Skipping future date {date} during processing")
+                    # Skip future dates by comparing datetime objects
+                    try:
+                        date_obj = datetime.strptime(date, "%Y-%m-%d")
+                        today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                        if date_obj > today_obj:
+                            logger.info(f"Skipping future date {date} during processing")
+                            continue
+                    except ValueError:
+                        logger.error(f"Error parsing date {date}")
                         continue
                     process_date(date, force_refresh=True)  # Force refresh for empty data too
 

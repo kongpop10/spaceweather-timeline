@@ -205,9 +205,17 @@ def render_data_management(days_to_show):
                             days_to_show=days_to_show,
                             forecast_days=forecast_days
                         )
-                        # Filter out future dates
-                        today = datetime.now().strftime("%Y-%m-%d")
-                        historical_dates = [date for date in date_range if date <= today]
+                        # Filter out future dates using datetime objects
+                        today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                        historical_dates = []
+
+                        for date in date_range:
+                            try:
+                                date_obj = datetime.strptime(date, "%Y-%m-%d")
+                                if date_obj <= today_obj:
+                                    historical_dates.append(date)
+                            except ValueError:
+                                logger.error(f"Error parsing date {date}")
 
                         if historical_dates:
                             process_date_range(
@@ -217,7 +225,16 @@ def render_data_management(days_to_show):
                             )
 
                             # Log info about skipped future dates
-                            future_dates = [date for date in date_range if date > today]
+                            future_dates = []
+                            for date in date_range:
+                                try:
+                                    date_obj = datetime.strptime(date, "%Y-%m-%d")
+                                    if date_obj > today_obj:
+                                        future_dates.append(date)
+                                except ValueError:
+                                    # Skip invalid dates
+                                    pass
+
                             if future_dates:
                                 logger.info(f"Skipped {len(future_dates)} future dates: {', '.join(future_dates)}")
                     # Reset the confirmation flag
@@ -299,12 +316,18 @@ def render_data_management(days_to_show):
                     # Find dates with empty data
                     existing_data = get_all_data_from_db()
                     dates_with_empty_data = []
-                    today = datetime.now().strftime("%Y-%m-%d")
 
                     for data in existing_data:
                         if data.get("date") in date_range:
-                            # Skip future dates
-                            if data.get("date") > today:
+                            # Skip future dates by comparing datetime objects
+                            try:
+                                date_obj = datetime.strptime(data.get("date"), "%Y-%m-%d")
+                                today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                                if date_obj > today_obj:
+                                    continue
+                            except (ValueError, TypeError):
+                                # If we can't parse the date, skip this entry
                                 continue
 
                             # Skip dates marked as forecasts

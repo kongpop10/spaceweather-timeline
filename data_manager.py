@@ -85,23 +85,28 @@ def process_date(date_str, force_refresh=False, max_retries=2):
     Returns:
         dict: Processed data
     """
-    # Check if the date is in the future
-    today = datetime.now().strftime("%Y-%m-%d")
-    if date_str > today:
-        logger.warning(f"Skipping future date {date_str}. Cannot scrape data that doesn't exist yet.")
-        # Return a basic structure for future dates
-        return {
-            "date": date_str,
-            "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
-            "events": {
-                "cme": [],
-                "sunspot": [],
-                "flares": [],
-                "coronal_holes": []
-            },
-            "is_forecast": True,
-            "error": "Future date - no data available"
-        }
+    # Check if the date is in the future by comparing datetime objects
+    try:
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if date_obj > today_obj:
+            logger.warning(f"Skipping future date {date_str}. Cannot scrape data that doesn't exist yet.")
+            # Return a basic structure for future dates
+            return {
+                "date": date_str,
+                "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
+                "events": {
+                    "cme": [],
+                    "sunspot": [],
+                    "flares": [],
+                    "coronal_holes": []
+                },
+                "is_forecast": True,
+                "error": "Future date - no data available"
+            }
+    except ValueError as e:
+        logger.error(f"Error parsing date {date_str}: {e}")
 
     # Check if data already exists and we're not forcing a refresh
     existing_data = load_data_from_db(date_str)
@@ -309,25 +314,32 @@ def process_date_range(start_date=None, end_date=None, days=30, force_refresh=Fa
     # Process each date
     results = []
     for date_str in date_range:
-        # Check if the date is in the future
-        today = datetime.now().strftime("%Y-%m-%d")
-        if date_str > today:
-            logger.info(f"Date {date_str} is in the future. Creating forecast placeholder.")
-            # Create a placeholder for future dates
-            result = {
-                "date": date_str,
-                "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
-                "events": {
-                    "cme": [],
-                    "sunspot": [],
-                    "flares": [],
-                    "coronal_holes": []
-                },
-                "is_forecast": True,
-                "error": "Future date - no data available"
-            }
-        else:
-            # Process historical dates normally
+        # Check if the date is in the future by comparing datetime objects
+        try:
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+            if date_obj > today_obj:
+                logger.info(f"Date {date_str} is in the future. Creating forecast placeholder.")
+                # Create a placeholder for future dates
+                result = {
+                    "date": date_str,
+                    "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
+                    "events": {
+                        "cme": [],
+                        "sunspot": [],
+                        "flares": [],
+                        "coronal_holes": []
+                    },
+                    "is_forecast": True,
+                    "error": "Future date - no data available"
+                }
+            else:
+                # Process historical dates normally
+                result = process_date(date_str, force_refresh=force_refresh)
+        except ValueError as e:
+            logger.error(f"Error parsing date {date_str}: {e}")
+            # Process anyway as a fallback
             result = process_date(date_str, force_refresh=force_refresh)
 
         # Always add the result, even if it's a minimal structure

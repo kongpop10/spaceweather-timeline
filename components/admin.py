@@ -191,35 +191,35 @@ def render_data_management(days_to_show):
                 st.warning("⚠️ **WARNING**: This will erase all existing data for the current date range and fetch it again. This action cannot be undone.")
 
                 # Create two columns for the confirm/cancel buttons
-                confirm_col1, confirm_col2 = st.columns(2)
+                refresh_all_col1, refresh_all_col2 = st.columns(2)
 
-                with confirm_col1:
-                    if st.button("✅ Yes, Refresh All Data"):
-                        with st.spinner("Fetching latest data..."):
-                            # Force re-processing of the date range
-                            # Calculate date range with forecast days to include future dates
-                            forecast_days = 3  # Number of days to forecast into the future
-                            from date_utils import calculate_date_range
-                            _, _, date_range = calculate_date_range(
-                                admin_selected_date=st.session_state.admin_selected_date,
-                                days_to_show=days_to_show,
-                                forecast_days=forecast_days
-                            )
-                            process_date_range(
-                                start_date=date_range[0],
-                                end_date=date_range[-1],
-                                force_refresh=True
-                            )
-                        # Reset the confirmation flag
-                        st.session_state.show_refresh_confirmation = False
-                        st.success("All data refreshed!")
-                        st.rerun()
+                # Yes button
+                if refresh_all_col1.button("✅ Yes, Refresh All Data"):
+                    with st.spinner("Fetching latest data..."):
+                        # Force re-processing of the date range
+                        # Calculate date range with forecast days to include future dates
+                        forecast_days = 3  # Number of days to forecast into the future
+                        from date_utils import calculate_date_range
+                        _, _, date_range = calculate_date_range(
+                            admin_selected_date=st.session_state.admin_selected_date,
+                            days_to_show=days_to_show,
+                            forecast_days=forecast_days
+                        )
+                        process_date_range(
+                            start_date=date_range[0],
+                            end_date=date_range[-1],
+                            force_refresh=True
+                        )
+                    # Reset the confirmation flag
+                    st.session_state.show_refresh_confirmation = False
+                    st.success("All data refreshed!")
+                    st.rerun()
 
-                with confirm_col2:
-                    if st.button("❌ Cancel"):
-                        # Reset the confirmation flag
-                        st.session_state.show_refresh_confirmation = False
-                        st.rerun()
+                # Cancel button
+                if refresh_all_col2.button("❌ Cancel"):
+                    # Reset the confirmation flag
+                    st.session_state.show_refresh_confirmation = False
+                    st.rerun()
 
         # Second row of buttons
         col4, col5 = st.columns(2)
@@ -235,26 +235,26 @@ def render_data_management(days_to_show):
                 # Show warning and confirmation buttons
                 st.warning("⚠️ **WARNING**: This will clear all cached data. You may need to reload some data.")
                 # Create two columns for the confirm/cancel buttons
-                cache_confirm_col1, cache_confirm_col2 = st.columns(2)
+                clear_cache_col1, clear_cache_col2 = st.columns(2)
 
-                with cache_confirm_col1:
-                    if st.button("✅ Yes, Clear Cache"):
-                        st.cache_data.clear()
-                        # Reset session state counters
-                        if "cached_dates_count" in st.session_state:
-                            del st.session_state.cached_dates_count
-                        if "processed_dates_count" in st.session_state:
-                            del st.session_state.processed_dates_count
-                        # Reset the confirmation flag
-                        st.session_state.show_cache_clear_confirmation = False
-                        st.success("Streamlit cache cleared!")
-                        st.rerun()
+                # Yes button
+                if clear_cache_col1.button("✅ Yes, Clear Cache"):
+                    st.cache_data.clear()
+                    # Reset session state counters
+                    if "cached_dates_count" in st.session_state:
+                        del st.session_state.cached_dates_count
+                    if "processed_dates_count" in st.session_state:
+                        del st.session_state.processed_dates_count
+                    # Reset the confirmation flag
+                    st.session_state.show_cache_clear_confirmation = False
+                    st.success("Streamlit cache cleared!")
+                    st.rerun()
 
-                with cache_confirm_col2:
-                    if st.button("❌ Cancel", key="cancel_cache_clear"):
-                        # Reset the confirmation flag
-                        st.session_state.show_cache_clear_confirmation = False
-                        st.rerun()
+                # Cancel button
+                if clear_cache_col2.button("❌ Cancel", key="cancel_cache_clear"):
+                    # Reset the confirmation flag
+                    st.session_state.show_cache_clear_confirmation = False
+                    st.rerun()
 
         with col5:
             # Initialize session state for refresh empty data confirmation
@@ -266,54 +266,55 @@ def render_data_management(days_to_show):
             else:
                 # Show warning and confirmation buttons
                 st.warning("⚠️ **WARNING**: This will attempt to refresh all empty data entries using the LLM.")
-                # Create two columns for the confirm/cancel buttons
-                empty_confirm_col1, empty_confirm_col2 = st.columns(2)
 
-                with empty_confirm_col1:
-                    if st.button("✅ Yes, Refresh Empty Data"):
-                        # Set the flag to check for empty data
-                        st.session_state.check_empty_data = True
-                        # Clear the cache to force a refresh
-                        st.cache_data.clear()
+                # Use buttons side by side without nested columns
+                refresh_empty_col1, refresh_empty_col2 = st.columns(2)
 
-                        # Calculate date range with forecast days to include future dates
-                        forecast_days = 3  # Number of days to forecast into the future
-                        from date_utils import calculate_date_range
-                        _, _, date_range = calculate_date_range(
-                            admin_selected_date=st.session_state.admin_selected_date,
-                            days_to_show=days_to_show,
-                            forecast_days=forecast_days
-                        )
+                # Yes button
+                if refresh_empty_col1.button("✅ Yes, Refresh Empty Data"):
+                    # Set the flag to check for empty data
+                    st.session_state.check_empty_data = True
+                    # Clear the cache to force a refresh
+                    st.cache_data.clear()
 
-                        # Find dates with empty data
-                        existing_data = get_all_data_from_db()
-                        dates_with_empty_data = []
-                        for data in existing_data:
-                            if data.get("date") in date_range:
-                                events = data.get("events", {})
-                                total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
-                                if total_events == 0 or "error" in data:
-                                    dates_with_empty_data.append(data.get("date"))
+                    # Calculate date range with forecast days to include future dates
+                    forecast_days = 3  # Number of days to forecast into the future
+                    from date_utils import calculate_date_range
+                    _, _, date_range = calculate_date_range(
+                        admin_selected_date=st.session_state.admin_selected_date,
+                        days_to_show=days_to_show,
+                        forecast_days=forecast_days
+                    )
 
-                        # Process empty dates with force_refresh=True
-                        if dates_with_empty_data:
-                            with st.spinner(f"Refreshing {len(dates_with_empty_data)} dates with empty data..."):
-                                for date in dates_with_empty_data:
-                                    from data_manager import process_date
-                                    process_date(date, force_refresh=True)
-                            st.success(f"Refreshed {len(dates_with_empty_data)} dates with empty data!")
-                        else:
-                            st.info("No empty data found to refresh.")
+                    # Find dates with empty data
+                    existing_data = get_all_data_from_db()
+                    dates_with_empty_data = []
+                    for data in existing_data:
+                        if data.get("date") in date_range:
+                            events = data.get("events", {})
+                            total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+                            if total_events == 0 or "error" in data:
+                                dates_with_empty_data.append(data.get("date"))
 
-                        # Reset the confirmation flag
-                        st.session_state.show_refresh_empty_confirmation = False
-                        st.rerun()
+                    # Process empty dates with force_refresh=True
+                    if dates_with_empty_data:
+                        with st.spinner(f"Refreshing {len(dates_with_empty_data)} dates with empty data..."):
+                            for date in dates_with_empty_data:
+                                from data_manager import process_date
+                                process_date(date, force_refresh=True)
+                        st.success(f"Refreshed {len(dates_with_empty_data)} dates with empty data!")
+                    else:
+                        st.info("No empty data found to refresh.")
 
-                with empty_confirm_col2:
-                    if st.button("❌ Cancel", key="cancel_refresh_empty"):
-                        # Reset the confirmation flag
-                        st.session_state.show_refresh_empty_confirmation = False
-                        st.rerun()
+                    # Reset the confirmation flag
+                    st.session_state.show_refresh_empty_confirmation = False
+                    st.rerun()
+
+                # Cancel button
+                if refresh_empty_col2.button("❌ Cancel", key="cancel_refresh_empty"):
+                    # Reset the confirmation flag
+                    st.session_state.show_refresh_empty_confirmation = False
+                    st.rerun()
     else:
         st.warning("No data available in database")
 

@@ -90,21 +90,29 @@ def process_date(date_str, force_refresh=False, max_retries=2):
         date_obj = datetime.strptime(date_str, "%Y-%m-%d")
         today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
+        # Only consider it a future date if it's actually in the future
+        # This allows historical dates from any year to be processed
         if date_obj > today_obj:
-            logger.warning(f"Skipping future date {date_str}. Cannot scrape data that doesn't exist yet.")
-            # Return a basic structure for future dates
-            return {
-                "date": date_str,
-                "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
-                "events": {
-                    "cme": [],
-                    "sunspot": [],
-                    "flares": [],
-                    "coronal_holes": []
-                },
-                "is_forecast": True,
-                "error": "Future date - no data available"
-            }
+            # Check if we're dealing with a date from a different year
+            # If the date is from a past year, we should process it as a historical date
+            if date_str.startswith("2025-") or date_str.startswith("2024-"):
+                logger.warning(f"Skipping future date {date_str}. Cannot scrape data that doesn't exist yet.")
+                # Return a basic structure for future dates
+                return {
+                    "date": date_str,
+                    "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
+                    "events": {
+                        "cme": [],
+                        "sunspot": [],
+                        "flares": [],
+                        "coronal_holes": []
+                    },
+                    "is_forecast": True,
+                    "error": "Future date - no data available"
+                }
+            else:
+                # It's a historical date from a past year, so we should process it
+                logger.info(f"Processing historical date {date_str} from a past year")
     except ValueError as e:
         logger.error(f"Error parsing date {date_str}: {e}")
 
@@ -320,20 +328,27 @@ def process_date_range(start_date=None, end_date=None, days=30, force_refresh=Fa
             today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
             if date_obj > today_obj:
-                logger.info(f"Date {date_str} is in the future. Creating forecast placeholder.")
-                # Create a placeholder for future dates
-                result = {
-                    "date": date_str,
-                    "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
-                    "events": {
-                        "cme": [],
-                        "sunspot": [],
-                        "flares": [],
-                        "coronal_holes": []
-                    },
-                    "is_forecast": True,
-                    "error": "Future date - no data available"
-                }
+                # Check if we're dealing with a date from a different year
+                # If the date is from a past year, we should process it as a historical date
+                if date_str.startswith("2025-") or date_str.startswith("2024-"):
+                    logger.info(f"Date {date_str} is in the future. Creating forecast placeholder.")
+                    # Create a placeholder for future dates
+                    result = {
+                        "date": date_str,
+                        "url": f"https://spaceweather.com/archive.php?view=1&day={date_str[8:10]}&month={date_str[5:7]}&year={date_str[0:4]}",
+                        "events": {
+                            "cme": [],
+                            "sunspot": [],
+                            "flares": [],
+                            "coronal_holes": []
+                        },
+                        "is_forecast": True,
+                        "error": "Future date - no data available"
+                    }
+                else:
+                    # It's a historical date from a past year, so we should process it
+                    logger.info(f"Processing historical date {date_str} from a past year")
+                    result = process_date(date_str, force_refresh=force_refresh)
             else:
                 # Process historical dates normally
                 result = process_date(date_str, force_refresh=force_refresh)

@@ -153,11 +153,16 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
         if data.get("date") in date_range:
             # Skip future dates by comparing datetime objects
             try:
-                date_obj = datetime.strptime(data.get("date"), "%Y-%m-%d")
+                date_str = data.get("date")
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
                 today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
                 if date_obj > today_obj:
-                    continue
+                    # Check if we're dealing with a date from a different year
+                    # If the date is from a past year, we should process it as a historical date
+                    if date_str.startswith("2025-") or date_str.startswith("2024-"):
+                        continue
+                    # Otherwise, it's a historical date from a past year, so we should process it
             except (ValueError, TypeError):
                 # If we can't parse the date, skip this entry
                 continue
@@ -225,8 +230,13 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
                         today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
                         if date_obj > today_obj:
-                            logger.info(f"Skipping future date {date} during force refresh")
-                            continue
+                            # Check if we're dealing with a date from a different year
+                            # If the date is from a past year, we should process it as a historical date
+                            if date.startswith("2025-") or date.startswith("2024-"):
+                                logger.info(f"Skipping future date {date} during force refresh")
+                                continue
+                            # Otherwise, it's a historical date from a past year, so we should process it
+                            logger.info(f"Processing historical date {date} from a past year during force refresh")
                     except ValueError:
                         logger.error(f"Error parsing date {date}")
                         continue
@@ -240,8 +250,13 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
                         today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
                         if date_obj > today_obj:
-                            logger.info(f"Skipping future date {date} during processing")
-                            continue
+                            # Check if we're dealing with a date from a different year
+                            # If the date is from a past year, we should process it as a historical date
+                            if date.startswith("2025-") or date.startswith("2024-"):
+                                logger.info(f"Skipping future date {date} during processing")
+                                continue
+                            # Otherwise, it's a historical date from a past year, so we should process it
+                            logger.info(f"Processing historical date {date} from a past year during processing")
                     except ValueError:
                         logger.error(f"Error parsing date {date}")
                         continue

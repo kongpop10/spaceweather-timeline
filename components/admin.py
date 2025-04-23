@@ -212,7 +212,8 @@ def render_data_management(days_to_show):
                         for date in date_range:
                             try:
                                 date_obj = datetime.strptime(date, "%Y-%m-%d")
-                                if date_obj <= today_obj:
+                                # Include dates that are either in the past or are historical dates from past years
+                                if date_obj <= today_obj or not (date.startswith("2025-") or date.startswith("2024-")):
                                     historical_dates.append(date)
                             except ValueError:
                                 logger.error(f"Error parsing date {date}")
@@ -229,7 +230,8 @@ def render_data_management(days_to_show):
                             for date in date_range:
                                 try:
                                     date_obj = datetime.strptime(date, "%Y-%m-%d")
-                                    if date_obj > today_obj:
+                                    # Only consider it a future date if it's from 2024 or 2025
+                                    if date_obj > today_obj and (date.startswith("2025-") or date.startswith("2024-")):
                                         future_dates.append(date)
                                 except ValueError:
                                     # Skip invalid dates
@@ -321,11 +323,16 @@ def render_data_management(days_to_show):
                         if data.get("date") in date_range:
                             # Skip future dates by comparing datetime objects
                             try:
-                                date_obj = datetime.strptime(data.get("date"), "%Y-%m-%d")
+                                date_str = data.get("date")
+                                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
                                 today_obj = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
                                 if date_obj > today_obj:
-                                    continue
+                                    # Check if we're dealing with a date from a different year
+                                    # If the date is from a past year, we should process it as a historical date
+                                    if date_str.startswith("2025-") or date_str.startswith("2024-"):
+                                        continue
+                                    # Otherwise, it's a historical date from a past year, so we should process it
                             except (ValueError, TypeError):
                                 # If we can't parse the date, skip this entry
                                 continue

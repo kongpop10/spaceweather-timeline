@@ -209,8 +209,13 @@ def call_llm(prompt):
         prompt (str): The prompt to send to the LLM
 
     Returns:
-        str: The LLM response
+        str: The LLM response or None if there's an error
     """
+    # Check if the prompt contains meaningful data to analyze
+    if "No data available" in prompt or "No full text available" in prompt:
+        logger.warning("Skipping LLM call for empty or minimal data")
+        return None
+
     config = get_llm_config()
     provider = config["provider"]
     api_key = config["api_key"]
@@ -219,6 +224,11 @@ def call_llm(prompt):
     site_url = config["site_url"]
     site_name = config["site_name"]
     reasoning_effort = config["reasoning_effort"]
+
+    # Check if API key is missing or empty
+    if not api_key:
+        logger.error(f"Missing API key for {provider}. Check your secrets.toml file.")
+        return None
 
     try:
         # Create OpenAI client with appropriate base URL

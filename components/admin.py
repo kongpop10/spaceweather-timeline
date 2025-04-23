@@ -205,11 +205,21 @@ def render_data_management(days_to_show):
                             days_to_show=days_to_show,
                             forecast_days=forecast_days
                         )
-                        process_date_range(
-                            start_date=date_range[0],
-                            end_date=date_range[-1],
-                            force_refresh=True
-                        )
+                        # Filter out future dates
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        historical_dates = [date for date in date_range if date <= today]
+
+                        if historical_dates:
+                            process_date_range(
+                                start_date=historical_dates[0],
+                                end_date=historical_dates[-1],
+                                force_refresh=True
+                            )
+
+                            # Log info about skipped future dates
+                            future_dates = [date for date in date_range if date > today]
+                            if future_dates:
+                                logger.info(f"Skipped {len(future_dates)} future dates: {', '.join(future_dates)}")
                     # Reset the confirmation flag
                     st.session_state.show_refresh_confirmation = False
                     st.success("All data refreshed!")
@@ -289,8 +299,18 @@ def render_data_management(days_to_show):
                     # Find dates with empty data
                     existing_data = get_all_data_from_db()
                     dates_with_empty_data = []
+                    today = datetime.now().strftime("%Y-%m-%d")
+
                     for data in existing_data:
                         if data.get("date") in date_range:
+                            # Skip future dates
+                            if data.get("date") > today:
+                                continue
+
+                            # Skip dates marked as forecasts
+                            if data.get("is_forecast", False):
+                                continue
+
                             events = data.get("events", {})
                             total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
                             if total_events == 0 or "error" in data:

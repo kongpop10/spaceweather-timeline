@@ -151,6 +151,14 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
     dates_with_empty_data = []
     for data in existing_data:
         if data.get("date") in date_range:
+            # Skip future dates
+            if data.get("date") > today:
+                continue
+
+            # Skip dates marked as forecasts
+            if data.get("is_forecast", False):
+                continue
+
             events = data.get("events", {})
             total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
             if total_events == 0 or "error" in data:
@@ -202,12 +210,20 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
     if dates_to_process or force_refresh:
         with st.spinner(f"Processing {len(dates_to_process) if not force_refresh else len(date_range)} dates..."):
             if force_refresh:
-                # Process all dates with force_refresh=True
+                # Process all dates with force_refresh=True (except future dates)
                 for date in date_range:
+                    # Skip future dates
+                    if date > today:
+                        logger.info(f"Skipping future date {date} during force refresh")
+                        continue
                     process_date(date, force_refresh=True)
             else:
-                # Process only new dates and dates with empty data
+                # Process only new dates and dates with empty data (except future dates)
                 for date in dates_to_process:
+                    # Skip future dates
+                    if date > today:
+                        logger.info(f"Skipping future date {date} during processing")
+                        continue
                     process_date(date, force_refresh=True)  # Force refresh for empty data too
 
         # Store the processed dates info in session state for admin panel

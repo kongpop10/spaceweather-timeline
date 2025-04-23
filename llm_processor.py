@@ -269,6 +269,7 @@ def call_llm(prompt):
 
         # Extract the response content
         content = completion.choices[0].message.content
+        reasoning = None
 
         # For Grok, also log reasoning content if available
         if provider == "grok" and hasattr(completion.choices[0].message, 'reasoning_content'):
@@ -278,7 +279,18 @@ def call_llm(prompt):
         # Check if the content is empty or doesn't contain valid JSON
         if not content or not ('{' in content and '}' in content):
             logger.warning(f"LLM returned empty or invalid JSON response: {content}")
-            return None
+
+            # Try to extract JSON from reasoning content if available
+            if reasoning and '{' in reasoning and '}' in reasoning:
+                logger.info("Attempting to extract JSON from reasoning content")
+                content = reasoning
+
+                # Check if the reasoning content contains valid JSON
+                if not ('{' in content and '}' in content):
+                    logger.warning("Reasoning content does not contain valid JSON")
+                    return None
+            else:
+                return None
 
         # Log a sample of the response for debugging
         logger.debug(f"LLM response sample: {content[:200]}...")
@@ -338,6 +350,11 @@ def parse_llm_response(response, sections):
             json_match = re.search(r'(\{.*?\})', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
+            else:
+                # Try a more aggressive approach to find any JSON-like structure
+                json_match = re.search(r'(\{[\s\S]*?"events"[\s\S]*?\})', response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
 
         # Log the extracted JSON string for debugging
         logger.debug(f"Extracted JSON for {sections.get('date')}: {json_str[:200]}...")

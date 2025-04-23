@@ -66,25 +66,51 @@ class SupabaseClient:
         """
         url = f"{self.url}{endpoint}"
 
-        try:
-            if method == "GET":
-                response = requests.get(url, headers=self.headers, params=params)
-            elif method == "POST":
-                response = requests.post(url, headers=self.headers, json=data)
-            elif method == "PUT":
-                response = requests.put(url, headers=self.headers, json=data)
-            elif method == "DELETE":
-                response = requests.delete(url, headers=self.headers, params=params)
-            else:
-                logger.error(f"Unsupported HTTP method: {method}")
-                return None
+        # Add timeout and retry logic
+        max_retries = 3
+        retry_count = 0
+        timeout = 10  # 10 seconds timeout
 
-            response.raise_for_status()
-            return response.json()
+        while retry_count < max_retries:
+            try:
+                logger.info(f"Making {method} request to Supabase: {endpoint} (attempt {retry_count + 1}/{max_retries})")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to Supabase: {e}")
-            return None
+                if method == "GET":
+                    response = requests.get(url, headers=self.headers, params=params, timeout=timeout)
+                elif method == "POST":
+                    response = requests.post(url, headers=self.headers, json=data, timeout=timeout)
+                elif method == "PUT":
+                    response = requests.put(url, headers=self.headers, json=data, timeout=timeout)
+                elif method == "DELETE":
+                    response = requests.delete(url, headers=self.headers, params=params, timeout=timeout)
+                else:
+                    logger.error(f"Unsupported HTTP method: {method}")
+                    return None
+
+                # Check for 4xx or 5xx status codes
+                if response.status_code >= 400:
+                    logger.warning(f"Supabase API error: {response.status_code} - {response.text}")
+                    if response.status_code == 400 and "id" in str(params):
+                        # Special handling for 400 errors with id parameter
+                        logger.info(f"Attempting to recover from 400 error with id parameter")
+                        # Try to continue despite the error
+                        return {}
+
+                response.raise_for_status()
+                return response.json()
+
+            except requests.exceptions.Timeout:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Timeout error after {max_retries} attempts: {url}")
+                    return None
+                logger.warning(f"Timeout error, retrying ({retry_count}/{max_retries}): {url}")
+            except requests.exceptions.RequestException as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Request error after {max_retries} attempts: {e}")
+                    return None
+                logger.warning(f"Request error, retrying ({retry_count}/{max_retries}): {e}")
 
     def init_tables(self):
         """

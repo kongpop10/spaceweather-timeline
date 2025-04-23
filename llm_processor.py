@@ -183,10 +183,10 @@ Please respond with a JSON structure that categorizes all the events you can ide
     "cme": [
       {{
         "tone": "Normal/Significant",
-        "date": "YYYY-MM-DD",
-        "predicted_arrival": "YYYY-MM-DD" or null,
+        "date": "{date}",
+        "predicted_arrival": null,
         "detail": "Detailed description",
-        "image_url": "URL" or null
+        "image_url": null
       }}
     ],
     "sunspot": [...],
@@ -197,6 +197,8 @@ Please respond with a JSON structure that categorizes all the events you can ide
 ```
 
 Only include events that are explicitly mentioned in the provided text. If no events are found for a category, return an empty array for that category. Ensure your response is valid JSON.
+
+IMPORTANT: If you can't find any specific events in the text, please still return a valid JSON structure with the date and empty arrays for each category. DO NOT return null or an empty response.
 """
 
     return prompt
@@ -272,6 +274,11 @@ def call_llm(prompt):
         if provider == "grok" and hasattr(completion.choices[0].message, 'reasoning_content'):
             reasoning = completion.choices[0].message.reasoning_content
             logger.debug(f"Grok reasoning: {reasoning[:200]}...")
+
+        # Check if the content is empty or doesn't contain valid JSON
+        if not content or not ('{' in content and '}' in content):
+            logger.warning(f"LLM returned empty or invalid JSON response: {content}")
+            return None
 
         # Log a sample of the response for debugging
         logger.debug(f"LLM response sample: {content[:200]}...")

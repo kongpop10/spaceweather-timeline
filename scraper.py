@@ -47,9 +47,29 @@ def scrape_spaceweather(date=None):
 
         logger.info(f"Scraping URL: {url}")
 
-        # Make the request
-        response = requests.get(url)
-        response.raise_for_status()
+        # Make the request with timeout and retries
+        max_retries = 3
+        retry_count = 0
+        timeout = 10  # 10 seconds timeout
+
+        while retry_count < max_retries:
+            try:
+                logger.info(f"Attempting to scrape {url} (attempt {retry_count + 1}/{max_retries})")
+                response = requests.get(url, timeout=timeout)
+                response.raise_for_status()
+                break  # Success, exit the loop
+            except requests.exceptions.Timeout:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Timeout error after {max_retries} attempts: {url}")
+                    raise
+                logger.warning(f"Timeout error, retrying ({retry_count}/{max_retries}): {url}")
+            except requests.exceptions.RequestException as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Request error after {max_retries} attempts: {e}")
+                    raise
+                logger.warning(f"Request error, retrying ({retry_count}/{max_retries}): {e}")
 
         # Parse the HTML
         soup = BeautifulSoup(response.text, 'html.parser')

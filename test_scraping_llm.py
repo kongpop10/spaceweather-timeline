@@ -306,6 +306,7 @@ def call_llm(prompt, provider="grok"):
 
         # Extract the response content
         content = completion.choices[0].message.content
+        reasoning = None
 
         # For Grok, also log reasoning content if available
         if provider == "grok" and hasattr(completion.choices[0].message, 'reasoning_content'):
@@ -320,7 +321,13 @@ def call_llm(prompt, provider="grok"):
         # Check if the content is empty or doesn't contain valid JSON
         if not content:
             logger.warning("LLM returned empty response")
-            return None
+
+            # Try to extract JSON from reasoning content if available
+            if reasoning and '{' in reasoning and '}' in reasoning:
+                logger.info("Attempting to extract JSON from reasoning content")
+                content = reasoning
+            else:
+                return None
 
         # Log the response
         logger.info(f"LLM response length: {len(content)} characters")
@@ -470,6 +477,11 @@ def parse_llm_response(response, sections):
             json_match = re.search(r'(\{.*?\})', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
+            else:
+                # Try a more aggressive approach to find any JSON-like structure
+                json_match = re.search(r'(\{[\s\S]*?"events"[\s\S]*?\})', response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
 
         # Log the extracted JSON string for debugging
         logger.debug(f"Extracted JSON for {sections.get('date')}: {json_str[:200]}...")
@@ -498,18 +510,64 @@ def parse_llm_response(response, sections):
         logger.error(f"Error parsing LLM response: {e}")
         logger.error(f"Problematic response: {response[:500]}...")
 
-        # Fallback: create a basic structure
-        return {
-            "date": sections.get("date"),
-            "url": sections.get("url"),
-            "events": {
-                "cme": [],
-                "sunspot": [],
-                "flares": [],
-                "coronal_holes": []
-            },
-            "error": str(e)
-        }
+        # Try to create a valid JSON structure from the response
+        try:
+            logger.info("Attempting to create a valid JSON structure from the response")
+
+            # Extract any event information we can find
+            import re
+
+            # Look for CME events
+            cme_events = []
+            cme_matches = re.findall(r'CME.*?(?:Earth-facing|filament eruption|mass ejection)', response, re.IGNORECASE | re.DOTALL)
+            for match in cme_matches[:3]:  # Limit to 3 matches to avoid excessive processing
+                cme_events.append({
+                    "tone": "Normal",
+                    "date": sections.get("date"),
+                    "predicted_arrival": None,
+                    "detail": f"<p>{match[:200]}...</p>",
+                    "image_url": None
+                })
+
+            # Look for sunspot events
+            sunspot_events = []
+            sunspot_matches = re.findall(r'sunspot.*?(?:AR\d+|growing|decaying)', response, re.IGNORECASE | re.DOTALL)
+            for match in sunspot_matches[:3]:
+                sunspot_events.append({
+                    "tone": "Normal",
+                    "date": sections.get("date"),
+                    "predicted_arrival": None,
+                    "detail": f"<p>{match[:200]}...</p>",
+                    "image_url": None
+                })
+
+            # Create a valid JSON structure
+            return {
+                "date": sections.get("date"),
+                "url": sections.get("url"),
+                "events": {
+                    "cme": cme_events,
+                    "sunspot": sunspot_events,
+                    "flares": [],
+                    "coronal_holes": []
+                },
+                "extracted_from_response": True
+            }
+        except Exception as extraction_error:
+            logger.error(f"Error extracting information from response: {extraction_error}")
+
+            # Final fallback: create a basic structure
+            return {
+                "date": sections.get("date"),
+                "url": sections.get("url"),
+                "events": {
+                    "cme": [],
+                    "sunspot": [],
+                    "flares": [],
+                    "coronal_holes": []
+                },
+                "error": str(e)
+            }
 
 def main():
     """

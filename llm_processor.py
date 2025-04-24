@@ -102,29 +102,77 @@ def analyze_spaceweather_data(sections):
     # Prepare the prompt
     prompt = create_analysis_prompt(sections)
 
-    # Call the LLM
-    try:
-        response = call_llm(prompt)
+    # Call the LLM with retry mechanism
+    max_retries = 3
+    retry_count = 0
+    last_error = None
 
-        # Parse the response
-        structured_data = parse_llm_response(response, sections)
+    while retry_count < max_retries:
+        try:
+            # Log retry attempt
+            if retry_count > 0:
+                logger.info(f"LLM retry attempt {retry_count + 1}/{max_retries}")
 
-        return structured_data
+            # Call the LLM
+            response = call_llm(prompt)
 
-    except Exception as e:
-        logger.error(f"Error analyzing spaceweather data: {e}")
-        # Return a basic structure instead of None
-        return {
-            "date": sections.get("date", "unknown"),
-            "url": sections.get("url", "unknown"),
-            "events": {
-                "cme": [],
-                "sunspot": [],
-                "flares": [],
-                "coronal_holes": []
-            },
-            "error": f"Error analyzing data: {str(e)}"
-        }
+            # If response is None, retry
+            if response is None:
+                retry_count += 1
+                logger.warning(f"LLM returned None response (attempt {retry_count}/{max_retries})")
+                continue
+
+            # Parse the response
+            structured_data = parse_llm_response(response, sections)
+
+            # Check if we got valid data with events
+            if structured_data and "events" in structured_data:
+                events = structured_data["events"]
+                total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+
+                if total_events > 0 or retry_count == max_retries - 1:
+                    # We have events or this is our last retry, return the data
+                    logger.info(f"LLM analysis successful with {total_events} events")
+                    return structured_data
+                else:
+                    # No events found, but we have more retries
+                    logger.warning(f"LLM returned valid JSON but no events (attempt {retry_count + 1}/{max_retries})")
+                    retry_count += 1
+                    continue
+            else:
+                # Invalid structure, retry
+                logger.warning(f"LLM returned invalid data structure (attempt {retry_count + 1}/{max_retries})")
+                retry_count += 1
+                continue
+
+        except Exception as e:
+            last_error = e
+            retry_count += 1
+            logger.error(f"Error in LLM analysis (attempt {retry_count}/{max_retries}): {e}")
+
+            # If this is the last retry, break out of the loop
+            if retry_count >= max_retries:
+                break
+
+            # Wait briefly before retrying
+            import time
+            time.sleep(1)
+
+    # If we get here, all retries failed
+    logger.error(f"All LLM analysis attempts failed after {max_retries} retries")
+
+    # Return a basic structure instead of None
+    return {
+        "date": sections.get("date", "unknown"),
+        "url": sections.get("url", "unknown"),
+        "events": {
+            "cme": [],
+            "sunspot": [],
+            "flares": [],
+            "coronal_holes": []
+        },
+        "error": f"Error analyzing data after {max_retries} attempts: {str(last_error) if last_error else 'Unknown error'}"
+    }
 
 def create_analysis_prompt(sections):
     """
@@ -196,9 +244,15 @@ Please respond with a JSON structure that categorizes all the events you can ide
 }}
 ```
 
-Only include events that are explicitly mentioned in the provided text. If no events are found for a category, return an empty array for that category. Ensure your response is valid JSON.
-
-IMPORTANT: If you can't find any specific events in the text, please still return a valid JSON structure with the date and empty arrays for each category. DO NOT return null or an empty response.
+IMPORTANT GUIDELINES:
+1. Only include events that are explicitly mentioned in the provided text.
+2. Keep descriptions concise and focused on key information.
+3. If no events are found for a category, return an empty array for that category.
+4. Ensure your response is valid JSON with no trailing commas or syntax errors.
+5. Keep your total response under 2000 tokens to avoid truncation.
+6. If you can't find any specific events in the text, please still return a valid JSON structure with the date and empty arrays for each category.
+7. DO NOT return null or an empty response.
+8. DO NOT include any explanatory text outside the JSON structure.
 """
 
     return prompt
@@ -237,17 +291,18 @@ def call_llm(prompt):
         client = OpenAI(
             base_url=base_url,
             api_key=api_key,
+            timeout=60.0,  # Increase timeout to 60 seconds
         )
 
         # Common parameters for both providers
         common_params = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "You are a helpful space weather expert that analyzes data from spaceweather.com and provides structured information about space weather events. Always respond with valid JSON."},
+                {"role": "system", "content": "You are a helpful space weather expert that analyzes data from spaceweather.com and provides structured information about space weather events. Always respond with valid JSON. Keep your response concise and focused on the events mentioned in the text."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
-            "max_tokens": 4000,
+            "max_tokens": 3000,  # Reduced from 4000 to avoid potential truncation issues
             "response_format": {"type": "json_object"}  # Request JSON format explicitly
         }
 
@@ -290,6 +345,18 @@ def call_llm(prompt):
                     logger.warning("Reasoning content does not contain valid JSON")
                     return None
             else:
+                # For Grok, try to extract any JSON-like structure from the content
+                if provider == "grok" and content:
+                    logger.info("Attempting to extract JSON-like structure from Grok response")
+                    import re
+
+                    # Look for anything that resembles a JSON object
+                    json_match = re.search(r'(\{[\s\S]*?\})', content, re.DOTALL)
+                    if json_match:
+                        content = json_match.group(1)
+                        logger.info(f"Extracted potential JSON structure: {content[:100]}...")
+                        return content
+
                 return None
 
         # Log a sample of the response for debugging
@@ -302,6 +369,42 @@ def call_llm(prompt):
         return None
 
 
+
+def sanitize_json_response(response):
+    """
+    Sanitize and clean up a JSON response from an LLM
+
+    Args:
+        response (str): The raw LLM response
+
+    Returns:
+        str: Cleaned JSON string
+    """
+    if not response:
+        return response
+
+    # Remove any null bytes or other control characters that might corrupt the JSON
+    import re
+    response = re.sub(r'[\x00-\x1F\x7F]', '', response)
+
+    # Remove any trailing commas in arrays or objects (common JSON error)
+    response = re.sub(r',\s*}', '}', response)
+    response = re.sub(r',\s*]', ']', response)
+
+    # Fix missing quotes around keys (another common error)
+    response = re.sub(r'([{,])\s*([a-zA-Z0-9_]+)\s*:', r'\1"\2":', response)
+
+    # Ensure boolean values are lowercase (JSON standard)
+    response = re.sub(r':\s*True\b', r':true', response)
+    response = re.sub(r':\s*False\b', r':false', response)
+
+    # Replace single quotes with double quotes (JSON standard)
+    # This is tricky because we need to avoid replacing quotes within quotes
+    # A simple approach that works for most cases:
+    if "'" in response and '"' not in response:
+        response = response.replace("'", '"')
+
+    return response
 
 def parse_llm_response(response, sections):
     """
@@ -356,11 +459,79 @@ def parse_llm_response(response, sections):
                 if json_match:
                     json_str = json_match.group(1)
 
+        # Sanitize the JSON string to fix common issues
+        json_str = sanitize_json_response(json_str)
+
         # Log the extracted JSON string for debugging
         logger.debug(f"Extracted JSON for {sections.get('date')}: {json_str[:200]}...")
 
-        # Parse the JSON
-        data = json.loads(json_str)
+        # Try to fix truncated or malformed JSON
+        try:
+            # First attempt: Try to parse as is
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Initial JSON parsing failed: {e}")
+
+            # Second attempt: Try to fix common JSON issues
+            try:
+                # Check if it's a truncation issue (missing closing braces)
+                if json_str.count('{') > json_str.count('}'):
+                    logger.info("Attempting to fix truncated JSON (missing closing braces)")
+                    missing_braces = json_str.count('{') - json_str.count('}')
+                    json_str = json_str + ('}' * missing_braces)
+
+                # Check for unterminated strings
+                import re
+                # Find strings that start with " but don't have a matching closing "
+                # This is a simplified approach and might not catch all cases
+                unterminated_strings = re.findall(r'"[^"]*$', json_str)
+                if unterminated_strings:
+                    logger.info("Attempting to fix unterminated strings")
+                    for s in unterminated_strings:
+                        json_str = json_str.replace(s, s + '"')
+
+                # Try parsing again after fixes
+                data = json.loads(json_str)
+                logger.info("Successfully fixed and parsed JSON")
+            except json.JSONDecodeError:
+                # Third attempt: Try to extract a partial valid JSON structure
+                logger.warning("JSON fixing failed, attempting to extract partial valid structure")
+                try:
+                    # Extract the date and create a minimal valid structure
+                    date_match = re.search(r'"date"\s*:\s*"([^"]+)"', json_str)
+                    date = date_match.group(1) if date_match else sections.get("date")
+
+                    # Try to extract event data for each category
+                    events = {}
+                    for category in ["cme", "sunspot", "flares", "coronal_holes"]:
+                        events[category] = []
+                        # Look for event entries in this category
+                        category_pattern = rf'"{category}"\s*:\s*\[(.*?)\]'
+                        category_match = re.search(category_pattern, json_str, re.DOTALL)
+                        if category_match:
+                            category_content = category_match.group(1).strip()
+                            if category_content:
+                                # Try to extract individual event objects
+                                event_objects = re.finditer(r'\{(.*?)\}', category_content, re.DOTALL)
+                                for event_match in event_objects:
+                                    event_str = '{' + event_match.group(1) + '}'
+                                    try:
+                                        event_data = json.loads(event_str)
+                                        events[category].append(event_data)
+                                    except:
+                                        # Skip invalid event objects
+                                        continue
+
+                    # Create a valid data structure
+                    data = {
+                        "date": date,
+                        "events": events
+                    }
+                    logger.info(f"Created partial data structure with {sum(len(events[cat]) for cat in events)} events")
+                except Exception as ex:
+                    logger.error(f"Failed to extract partial data: {ex}")
+                    # Fall back to empty structure
+                    raise
 
         # Add the original URL
         data["url"] = sections.get("url")

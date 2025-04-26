@@ -111,39 +111,49 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
     if dates_to_process and not force_refresh:
         from data_manager import get_supabase_client
 
-        # Try to get data from Supabase for all dates at once
+        # Try to get data from Supabase only for the dates we need to process
         supabase_client = get_supabase_client()
         if supabase_client:
             try:
-                logger.info(f"Checking Supabase for data in date range {date_range[0]} to {date_range[-1]}")
-                supabase_data = supabase_client.get_all_dates()
-                if supabase_data:
-                    # Filter to only include dates we need to process
-                    supabase_data = [data for data in supabase_data if data.get("date") in dates_to_process]
+                # Get the earliest and latest dates we need to process
+                if dates_to_process:
+                    # Sort dates to ensure we get the correct range
+                    sorted_dates = sorted(dates_to_process)
+                    earliest_date = sorted_dates[0]
+                    latest_date = sorted_dates[-1]
 
-                    # Save all valid data to local database
-                    for data in supabase_data:
-                        # Check if the data has events
-                        events = data.get("events", {})
-                        total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+                    logger.info(f"Checking Supabase for data in date range {earliest_date} to {latest_date}")
 
-                        if total_events > 0 and "error" not in data:
-                            # Save to local database
-                            from db_manager import save_data_to_db
-                            save_data_to_db(data)
-                            logger.info(f"Data for {data.get('date')} retrieved from Supabase and saved to local database")
+                    # Use the new method to get only the dates in our range
+                    supabase_data = supabase_client.get_dates_in_range(earliest_date, latest_date)
 
-                            # Add a flag to indicate this data came from Supabase
-                            if "from_supabase" not in st.session_state:
-                                st.session_state.from_supabase = []
-                            st.session_state.from_supabase.append(data.get("date"))
+                    if supabase_data:
+                        # Filter to only include dates we need to process
+                        supabase_data = [data for data in supabase_data if data.get("date") in dates_to_process]
 
-                            # Remove from dates_to_process
-                            if data.get("date") in dates_to_process:
-                                dates_to_process.remove(data.get("date"))
-                                dates_from_cache.append(data.get("date"))
+                        # Save all valid data to local database
+                        for data in supabase_data:
+                            # Check if the data has events
+                            events = data.get("events", {})
+                            total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
 
-                    logger.info(f"Retrieved {len(supabase_data)} dates from Supabase")
+                            if total_events > 0 and "error" not in data:
+                                # Save to local database
+                                from db_manager import save_data_to_db
+                                save_data_to_db(data)
+                                logger.info(f"Data for {data.get('date')} retrieved from Supabase and saved to local database")
+
+                                # Add a flag to indicate this data came from Supabase
+                                if "from_supabase" not in st.session_state:
+                                    st.session_state.from_supabase = []
+                                st.session_state.from_supabase.append(data.get("date"))
+
+                                # Remove from dates_to_process
+                                if data.get("date") in dates_to_process:
+                                    dates_to_process.remove(data.get("date"))
+                                    dates_from_cache.append(data.get("date"))
+
+                        logger.info(f"Retrieved {len(supabase_data)} dates from Supabase")
             except Exception as e:
                 logger.error(f"Error retrieving data from Supabase: {e}")
 
@@ -188,7 +198,42 @@ def load_timeline_data(force_refresh=False, days_to_show_param=None):
 
         if supabase_client:
             try:
-                for date in dates_with_empty_data:
+                if dates_with_empty_data:
+                    # Sort dates to ensure we get the correct range
+                    sorted_empty_dates = sorted(dates_with_empty_data)
+                    earliest_date = sorted_empty_dates[0]
+                    latest_date = sorted_empty_dates[-1]
+
+                    logger.info(f"Checking Supabase for empty data in date range {earliest_date} to {latest_date}")
+
+                    # Use the new method to get only the dates in our range
+                    supabase_data = supabase_client.get_dates_in_range(earliest_date, latest_date)
+
+                    if supabase_data:
+                        # Process each date that was found in Supabase
+                        for data in supabase_data:
+                            date = data.get("date")
+                            if date in dates_with_empty_data:
+                                # Check if the data has events
+                                events = data.get("events", {})
+                                total_events = sum(len(events.get(cat, [])) for cat in ["cme", "sunspot", "flares", "coronal_holes"])
+
+                                if total_events > 0 and "error" not in data:
+                                    # Save to local database
+                                    from db_manager import save_data_to_db
+                                    save_data_to_db(data)
+                                    logger.info(f"Data for {date} retrieved from Supabase and saved to local database")
+
+                                    # Add a flag to indicate this data came from Supabase
+                                    if "from_supabase" not in st.session_state:
+                                        st.session_state.from_supabase = []
+                                    st.session_state.from_supabase.append(date)
+
+                                    # Remove from dates_with_empty_data
+                                    dates_with_empty_data.remove(date)
+
+                # For any remaining dates that weren't found in the batch request, try individual requests
+                for date in list(dates_with_empty_data):  # Use list() to create a copy we can modify while iterating
                     # Try to get data from Supabase for this date
                     supabase_data = supabase_client.get_date(date)
                     if supabase_data:

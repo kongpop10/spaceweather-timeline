@@ -295,6 +295,85 @@ class SupabaseClient:
             logger.error(f"Error getting date from Supabase: {e}")
             return None
 
+    def get_dates_in_range(self, start_date, end_date):
+        """
+        Get date records from Supabase within a specific date range
+
+        Args:
+            start_date (str): Start date in format YYYY-MM-DD
+            end_date (str): End date in format YYYY-MM-DD
+
+        Returns:
+            list: List of date records within the specified range
+        """
+        try:
+            # Get date records within the specified range
+            date_result = self._make_request(
+                "GET",
+                "/rest/v1/dates",
+                params={
+                    "select": "*",
+                    "date": f"gte.{start_date},lte.{end_date}",
+                    "order": "date.desc"
+                }
+            )
+
+            if not date_result:
+                logger.info(f"No data found in Supabase for date range {start_date} to {end_date}")
+                return []
+
+            range_data = []
+
+            for date_record in date_result:
+                supabase_id = date_record["id"]
+
+                # Get all events for this date
+                events_result = self._make_request(
+                    "GET",
+                    "/rest/v1/events",
+                    params={
+                        "date_id": f"eq.{supabase_id}",
+                        "select": "*",
+                        "order": "category.asc,is_significant.desc"
+                    }
+                )
+
+                # Convert to the expected format
+                result = {
+                    "date": date_record["date"],
+                    "url": date_record["url"],
+                    "events": {
+                        "cme": [],
+                        "sunspot": [],
+                        "flares": [],
+                        "coronal_holes": []
+                    }
+                }
+
+                if date_record.get("error"):
+                    result["error"] = date_record["error"]
+
+                # Group events by category
+                for event in events_result:
+                    category = event["category"]
+                    event_data = {
+                        "tone": event["tone"],
+                        "date": event["event_date"],
+                        "predicted_arrival": event["predicted_arrival"],
+                        "detail": event["detail"],
+                        "image_url": event["image_url"]
+                    }
+                    result["events"][category].append(event_data)
+
+                range_data.append(result)
+
+            logger.info(f"Retrieved {len(range_data)} records from Supabase for date range {start_date} to {end_date}")
+            return range_data
+
+        except Exception as e:
+            logger.error(f"Error getting date range from Supabase: {e}")
+            return []
+
     def get_all_dates(self):
         """
         Get all date records from Supabase

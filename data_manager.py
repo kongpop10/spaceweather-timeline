@@ -295,15 +295,21 @@ def process_date_range(start_date=None, end_date=None, days=30, force_refresh=Fa
 
     # If not forcing refresh, try to get data from Supabase for the entire date range
     if not force_refresh:
-        # Try to get data from Supabase for all dates at once
+        # Try to get data from Supabase only for the dates in our range
         supabase_client = get_supabase_client()
         if supabase_client:
             try:
-                logger.info(f"Checking Supabase for data in date range {start_date} to {end_date}")
-                supabase_data = supabase_client.get_all_dates()
-                if supabase_data:
-                    # Filter to only include dates in our range
-                    supabase_data = [data for data in supabase_data if data.get("date") in date_range]
+                # Get the earliest and latest dates in our range
+                if date_range:
+                    # Sort dates to ensure we get the correct range
+                    sorted_dates = sorted(date_range)
+                    earliest_date = sorted_dates[0]
+                    latest_date = sorted_dates[-1]
+
+                    logger.info(f"Checking Supabase for data in date range {earliest_date} to {latest_date}")
+
+                    # Use the new method to get only the dates in our range
+                    supabase_data = supabase_client.get_dates_in_range(earliest_date, latest_date)
 
                     # Save all valid data to local database
                     for data in supabase_data:

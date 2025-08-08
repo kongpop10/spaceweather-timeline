@@ -172,10 +172,6 @@ The app displays confirmation warnings for potentially destructive actions like 
 
 Administrators can set a global default for the number of days displayed in the timeline (from 1 to 30 days) using a slider in the admin panel. This setting is stored in the database and applies to all users accessing the app, ensuring a consistent viewing experience.
 
-## Deployment
-
-The app is currently deployed at: [https://spaceweather-timeline.streamlit.app](https://spaceweather-timeline.streamlit.app)
-
 ## Server/API Component
 
 In addition to the Streamlit app, this project includes a server component that:
